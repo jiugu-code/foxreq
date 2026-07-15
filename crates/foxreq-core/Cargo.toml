@@ -23,3 +23,7 @@ ruzstd = { version = "0.8.2", optional = true }
 [[example]]
 name = "capture_tls"
 required-features = ["nss-real"]
+
+[[example]]
+name = "https_get"
+required-features = ["nss-real"]

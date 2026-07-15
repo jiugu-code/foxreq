@@ -37,6 +37,82 @@ RUNTIME_CASES = (
     "rejects_an_invalid_der_trust_anchor",
 )
 
+HTTP1_CASES = (
+    (
+        "gets_a_fixed_response_with_duplicate_headers",
+        "fixed",
+        1,
+        ("GET",),
+        ("/fixed?x=1",),
+        (b"",),
+    ),
+    (
+        "sends_a_head_request_without_accepting_response_body_bytes",
+        "fixed",
+        1,
+        ("HEAD",),
+        ("/head",),
+        (b"",),
+    ),
+    (
+        "sends_a_post_and_accepts_an_informational_response",
+        "informational",
+        1,
+        ("POST",),
+        ("/submit",),
+        (b"payload",),
+    ),
+    ("decodes_a_chunked_response", "chunked", 1, ("GET",), ("/chunked",), (b"",)),
+    (
+        "completes_a_close_delimited_response",
+        "close",
+        1,
+        ("GET",),
+        ("/close",),
+        (b"",),
+    ),
+    (
+        "reuses_one_keepalive_connection",
+        "keepalive-two",
+        2,
+        ("GET", "GET"),
+        ("/one", "/two"),
+        (b"", b""),
+    ),
+    (
+        "reconnects_after_an_explicit_server_close",
+        "server-close",
+        2,
+        ("GET", "GET"),
+        ("/one", "/two"),
+        (b"", b""),
+    ),
+    (
+        "rejects_an_early_response_eof",
+        "early-close",
+        1,
+        ("GET",),
+        ("/early",),
+        (b"",),
+    ),
+    (
+        "rejects_ambiguous_response_framing",
+        "malformed-length",
+        1,
+        ("GET",),
+        ("/malformed",),
+        (b"",),
+    ),
+    (
+        "times_out_a_stalled_response_read",
+        "stall-read",
+        1,
+        ("GET",),
+        ("/stall",),
+        (b"",),
+    ),
+)
+
 
 def _free_loopback_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -160,6 +236,93 @@ def _run_runtime_case(repository, runtime, cargo, name, first_ca, second_ca):
         raise RealTlsTestError("real NSS runtime test failed: " + name)
 
 
+def _run_http1_case(
+    repository, runtime, cargo, fixture, name, scenario, count, methods, targets, bodies
+):
+    port = _free_loopback_port()
+    server_command = [
+        sys.executable,
+        "-m",
+        "tests.fixtures.http1_scenarios",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--certificate",
+        str(fixture / "server.pem"),
+        "--private-key",
+        str(fixture / "server.key"),
+        "--scenario",
+        scenario,
+        "--count",
+        str(count),
+        "--timeout",
+        "8",
+        "--stall-seconds",
+        "1",
+    ]
+    for method in methods:
+        server_command.extend(["--expect-method", method])
+    for target in targets:
+        server_command.extend(["--expect-target", target])
+    for body in bodies:
+        server_command.extend(["--expect-body-hex", body.hex()])
+    server_command.extend(["--expect-header", "X-Order:first"])
+    server_command.extend(["--expect-header", "X-Order:second"])
+    server = subprocess.Popen(
+        server_command,
+        cwd=str(repository),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
+    try:
+        time.sleep(0.4)
+        if server.poll() is not None:
+            stdout, stderr = server.communicate()
+            raise RealTlsTestError(
+                "HTTP/1 fixture failed before {}: {}{}".format(name, stdout, stderr)
+            )
+        environment = os.environ.copy()
+        environment["FOXREQ_NSS_RUNTIME_DIR"] = str(runtime)
+        environment["FOXREQ_HTTP1_TEST_PORT"] = str(port)
+        environment["FOXREQ_HTTP1_TEST_CA_DER"] = str(fixture / "ca.der")
+        command = [
+            cargo,
+            "test",
+            "-p",
+            "foxreq-core",
+            "--features",
+            "nss-real",
+            "--test",
+            "https_http1",
+            name,
+            "--",
+            "--exact",
+            "--ignored",
+            "--nocapture",
+        ]
+        completed = subprocess.run(command, cwd=str(repository), env=environment)
+        if completed.returncode != 0:
+            raise RealTlsTestError("real HTTP/1 test failed: " + name)
+        try:
+            stdout, stderr = server.communicate(timeout=10)
+        except subprocess.TimeoutExpired as exc:
+            raise RealTlsTestError("HTTP/1 fixture did not exit after " + name) from exc
+        if server.returncode != 0:
+            raise RealTlsTestError(
+                "HTTP/1 fixture failed during {}: {}{}".format(name, stdout, stderr)
+            )
+    finally:
+        if server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+
+
 def run_suite(repository, runtime, cargo):
     repository = Path(repository).resolve()
     runtime = Path(runtime).resolve()
@@ -173,9 +336,25 @@ def run_suite(repository, runtime, cargo):
         _run_case(
             repository, runtime, cargo, name, variant, use_ca, stall_before_tls
         )
-    return list(RUNTIME_CASES) + [
-        name for name, _variant, _use_ca, _stall_before_tls in CASES
-    ]
+    fixture = _fixture(repository, "valid")
+    for name, scenario, count, methods, targets, bodies in HTTP1_CASES:
+        _run_http1_case(
+            repository,
+            runtime,
+            cargo,
+            fixture,
+            name,
+            scenario,
+            count,
+            methods,
+            targets,
+            bodies,
+        )
+    return (
+        list(RUNTIME_CASES)
+        + [name for name, _variant, _use_ca, _stall_before_tls in CASES]
+        + [name for name, _scenario, _count, _methods, _targets, _bodies in HTTP1_CASES]
+    )
 
 
 def main(argv=None):
