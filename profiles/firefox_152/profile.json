@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "name": "firefox_152",
+  "firefox_version": "152.0.6",
+  "aliases": [
+    "firefox_current"
+  ],
+  "nss_revision": "089afe88dd219cf4b1516fd04f3b1c1fda3b7b61@NSS_3_124_RTM",
+  "nspr_revision": "54e7c1b0803d151e142e30dc0d05f12e1ec67a13@NSPR_4_39_RTM",
+  "capture_count": 100,
+  "extension_permutation": "nss"
+}

@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "profile": "firefox_152",
+  "firefox": {
+    "version": "152.0.6",
+    "channel": "release",
+    "build_id": "20260713164047",
+    "release_revision": "68dfbca029f49cab85d965451998997141758306",
+    "source_id": "firefox-source",
+    "artifacts": {
+      "windows-x86_64": "firefox-windows-x86_64-en-us",
+      "linux-x86_64": "firefox-linux-x86_64-en-us"
+    }
+  },
+  "components": {
+    "nss": {
+      "repository": "https://hg.mozilla.org/projects/nss",
+      "revision": "089afe88dd219cf4b1516fd04f3b1c1fda3b7b61",
+      "source_id": "nss-source",
+      "source_path": "security/nss",
+      "version": "3.124.0"
+    },
+    "nspr": {
+      "repository": "https://hg.mozilla.org/projects/nspr",
+      "revision": "54e7c1b0803d151e142e30dc0d05f12e1ec67a13",
+      "source_id": "nspr-source",
+      "source_path": "nsprpub",
+      "version": "4.39.0"
+    }
+  },
+  "builds": {
+    "windows-x86_64": {
+      "compiler": "MSVC 19.44.35228.0 (Visual Studio Build Tools 17.14.35)",
+      "flags": [
+        "--opt",
+        "--target=x64",
+        "--msvc",
+        "--disable-tests",
+        "--mozilla-central",
+        "--python=D:/software/Python/python.exe"
+      ]
+    }
+  },
+  "deferred_platforms": [
+    "linux-x86_64"
+  ],
+  "patches": [],
+  "capture": {
+    "endpoint": "https://127.0.0.1:8443/",
+    "operating_systems": {
+      "windows-x86_64": "Microsoft Windows 10 Pro 10.0.19045 build 19045 x86_64"
+    },
+    "locales": {
+      "windows-x86_64": "en-US",
+      "linux-x86_64": "en-US"
+    },
+    "preferences": {
+      "app.update.auto": false,
+      "browser.shell.checkDefaultBrowser": false,
+      "datareporting.healthreport.uploadEnabled": false,
+      "network.http.http3.enable": false,
+      "network.trr.mode": 5,
+      "toolkit.telemetry.enabled": false
+    },
+    "tools": {
+      "cmake": "4.4.0",
+      "foxreq-fingerprint-schema": "1",
+      "msvc": "19.44.35228.0",
+      "ninja": "1.11.1.git.kitware.jobserver-1",
+      "python": "3.8.1"
+    }
+  }
+}

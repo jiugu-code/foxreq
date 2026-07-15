@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 target/
 build/
+.cache/
 dist/
 *.pcap
 *.pcapng

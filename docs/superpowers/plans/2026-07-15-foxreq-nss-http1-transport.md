@@ -639,3 +639,11 @@ The next plan, `foxreq-nghttp2-python-api`, begins only after this stage is
 green. It will add the profiled HTTP/2 prefix through nghttp2, PyO3 bindings,
 the initial Requests-like Python surface, sessions/pooling, cookies, redirects,
 proxy CONNECT, streaming, and content decoding.
+
+## Scope note: Windows-local continuation
+
+On 2026-07-15 the user explicitly deferred Linux-host testing and accepted
+Windows-local verification for the current development continuation. G7 and
+Linux portions of G1/G4/G5 remain open; they must not be reported as passing.
+Tasks that are platform-independent or verified on Windows may continue, while
+Linux wheel/release claims remain blocked until those gates are resumed.
