@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/foxreq-core"]
+members = ["crates/foxreq-core", "crates/foxreq-py"]
 resolver = "2"
 
 [workspace.package]
