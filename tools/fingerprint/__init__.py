@@ -2,6 +2,7 @@
 
 from .errors import FingerprintError, ParseError, ProfileError
 from .profile import ProfileManifest, resolve_profile
+from .tls import parse_client_hello_records
 
 __all__ = [
     "FingerprintError",
@@ -9,4 +10,5 @@ __all__ = [
     "ProfileError",
     "ProfileManifest",
     "resolve_profile",
+    "parse_client_hello_records",
 ]
