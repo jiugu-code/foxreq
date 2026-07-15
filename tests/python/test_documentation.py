@@ -74,6 +74,7 @@ class DocumentationTests(unittest.TestCase):
             "_available_physical_memory",
             "4096",
             "CARGO_BUILD_JOBS",
+            "VsDevCmd.bat",
             "cargo fmt",
             "cargo clippy",
             "cargo test",
@@ -86,6 +87,13 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(required, text)
         self.assertNotIn("Start-Job", text)
         self.assertNotIn("ForEach-Object -Parallel", text)
+
+    def test_certificate_fixture_dependency_is_declared(self):
+        metadata = (REPOSITORY / "pyproject.toml").read_text(encoding="utf-8")
+        building = (REPOSITORY / "docs" / "building.md").read_text(encoding="utf-8")
+        self.assertIn("[project.optional-dependencies]", metadata)
+        self.assertIn("cryptography", metadata)
+        self.assertIn("cryptography", building)
 
 
 if __name__ == "__main__":

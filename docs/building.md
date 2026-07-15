@@ -47,7 +47,7 @@ $env:FOXREQ_NSS_RUNTIME_DIR = (Resolve-Path .cache/firefox-runtime/core).Path
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install "maturin>=1,<2" "certifi>=2025.8.3,<2027"
+.\.venv\Scripts\python.exe -m pip install "maturin>=1,<2" "certifi>=2025.8.3,<2027" "cryptography>=41"
 
 $env:CARGO_BUILD_JOBS = "1"
 $env:PYTHONUTF8 = "1"
@@ -62,6 +62,8 @@ $wheel = Get-ChildItem dist -Filter "foxreq-*.whl" |
 ```
 
 中文路径下如果 maturin 的 pip 探测出现控制台编码问题，应保留 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`。本项目验证流程使用 `maturin build` 后安装 wheel，不依赖 `maturin develop`。
+
+`cryptography` 只用于生成短期本地测试 CA 和服务器证书，列在 `project.optional-dependencies.test` 中，不属于 foxreq 发请求时的运行时依赖。
 
 ## Native stub 与 C ABI
 

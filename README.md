@@ -48,19 +48,22 @@ Python 层负责 URL、参数、请求头、正文、超时与 PEM 信任锚规�
 
 ## Python 安装
 
-当前尚无 PyPI 包或正式发布的预编译 wheel，需要在 Windows x86-64 源码构建。先准备 Python 3.10+、Rust 1.88.0 MSVC、Visual Studio C++ Build Tools、CMake、Ninja 与 maturin；完整版本和来源要求见 [构建说明](docs/building.md)。
+当前尚无 PyPI 包或正式发布的预编译 wheel，需要在 Windows x86-64 源码构建。先准备 Python 3.10+、Rust 1.88.0 MSVC、Visual Studio C++ Build Tools、CMake、Ninja 与 maturin；并在构建 wheel 前按下一节准备 NSS 运行时。完整版本和来源要求见 [构建说明](docs/building.md)。
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install "maturin>=1,<2"
 $env:CARGO_BUILD_JOBS = "1"
 $env:PYTHONUTF8 = "1"
+$env:FOXREQ_NSS_RUNTIME_DIR = (Resolve-Path .cache/firefox-runtime/core).Path
 .\.venv\Scripts\python.exe -m maturin build --release --out dist
 $wheel = Get-ChildItem dist -Filter "foxreq-*.whl" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 .\.venv\Scripts\python.exe -m pip install --force-reinstall --no-deps $wheel.FullName
 ```
 
 `certifi` 是运行时依赖。构建 wheel 后若使用 `--no-deps` 安装，应在受控环境中另行安装 `certifi>=2025.8.3,<2027`。
+
+若要运行仓库的真实回环验证，还需在本地虚拟环境安装测试可选依赖 `cryptography>=41`；它只负责生成短期 fixture 证书，不参与请求运行时。
 
 ## Firefox NSS 运行时
 

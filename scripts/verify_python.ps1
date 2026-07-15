@@ -26,6 +26,56 @@ function Invoke-Checked {
     }
 }
 
+function Import-VisualStudioEnvironment {
+    $vswhere = Get-Command 'vswhere' -ErrorAction SilentlyContinue
+    if ($null -eq $vswhere) {
+        $fallback = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
+        if (-not (Test-Path -LiteralPath $fallback -PathType Leaf)) {
+            throw 'vswhere is required to locate Visual Studio Build Tools'
+        }
+        $vswherePath = $fallback
+    } else {
+        $vswherePath = $vswhere.Source
+    }
+
+    $installation = & $vswherePath `
+        '-latest' `
+        '-products' '*' `
+        '-requires' 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' `
+        '-property' 'installationPath'
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($installation)) {
+        throw 'Visual Studio x64 C++ Build Tools are missing'
+    }
+
+    $devShell = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
+    if (-not (Test-Path -LiteralPath $devShell -PathType Leaf)) {
+        throw 'Visual Studio developer environment script is missing'
+    }
+    if ([string]::IsNullOrWhiteSpace($env:ComSpec)) {
+        throw 'Windows command processor is missing'
+    }
+
+    $command = '"{0}" -no_logo -arch=x64 -host_arch=x64 && set' -f $devShell
+    $environmentLines = & $env:ComSpec /d /c $command
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Visual Studio developer environment initialization failed'
+    }
+    foreach ($line in $environmentLines) {
+        $separator = $line.IndexOf('=')
+        if ($separator -gt 0) {
+            [Environment]::SetEnvironmentVariable(
+                $line.Substring(0, $separator),
+                $line.Substring($separator + 1),
+                'Process'
+            )
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($env:INCLUDE) -or [string]::IsNullOrWhiteSpace($env:LIB)) {
+        throw 'Visual Studio developer environment is incomplete'
+    }
+    Write-Output 'visual_studio_environment exit=0'
+}
+
 function Test-TrackedSensitiveMarkers {
     param(
         [Parameter(Mandatory)]
@@ -104,6 +154,7 @@ try {
     $env:CARGO_BUILD_JOBS = '1'
     $env:PYTHONUTF8 = '1'
     $env:PYTHONIOENCODING = 'utf-8'
+    Import-VisualStudioEnvironment
 
     Invoke-Checked 'rustc version' 'rustc' @('--version')
     Invoke-Checked 'cargo version' 'cargo' @('--version')
