@@ -1,7 +1,7 @@
 """Immutable wire-evidence models shared by parsers and comparators."""
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Any, Tuple
 
 
 @dataclass(frozen=True)
@@ -22,3 +22,12 @@ class ClientHello:
     cipher_suites: Tuple[int, ...]
     compression_methods: Tuple[int, ...]
     extensions: Tuple[TlsExtension, ...]
+
+
+@dataclass(frozen=True)
+class Difference:
+    """One deterministic mismatch between expected and actual evidence."""
+
+    path: str
+    expected: Any
+    actual: Any

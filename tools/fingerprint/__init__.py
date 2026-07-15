@@ -1,5 +1,6 @@
 """Wire-level fingerprint evidence helpers."""
 
+from .compare import PermutationPolicy, compare_evidence
 from .errors import FingerprintError, ParseError, ProfileError
 from .normalize import is_grease, normalize_client_hello
 from .profile import ProfileManifest, resolve_profile
@@ -14,4 +15,6 @@ __all__ = [
     "parse_client_hello_records",
     "is_grease",
     "normalize_client_hello",
+    "PermutationPolicy",
+    "compare_evidence",
 ]
