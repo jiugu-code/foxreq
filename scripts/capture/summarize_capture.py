@@ -38,6 +38,7 @@ class SummaryError(Exception):
 def summarize_records(
     records: Sequence[Mapping[str, object]],
     profile_data: Mapping[str, object],
+    expected_count: Optional[int] = None,
 ) -> Dict[str, object]:
     """Validate raw records and return a secret-free deterministic summary."""
 
@@ -45,10 +46,18 @@ def summarize_records(
         manifest = ProfileManifest.from_dict(profile_data)
     except ProfileError as error:
         raise SummaryError("invalid profile: {}".format(error))
-    if len(records) != manifest.capture_count:
+    if expected_count is None:
+        expected_count = manifest.capture_count
+    if (
+        isinstance(expected_count, bool)
+        or not isinstance(expected_count, int)
+        or expected_count < 1
+    ):
+        raise SummaryError("expected_count must be a positive integer")
+    if len(records) != expected_count:
         raise SummaryError(
             "capture_count requires {}, received {}".format(
-                manifest.capture_count,
+                expected_count,
                 len(records),
             )
         )
@@ -151,6 +160,21 @@ def load_jsonl(path: Path) -> List[Mapping[str, object]]:
                 raise SummaryError("JSONL line {} must be an object".format(line_number))
             records.append(value)
     return records
+
+
+def select_records(
+    records: Sequence[Mapping[str, object]], label: Optional[str]
+) -> List[Mapping[str, object]]:
+    if label is not None and label not in ("cold", "resumed", "synthetic"):
+        raise SummaryError("invalid capture label selection")
+    selected = []
+    for index, record in enumerate(records):
+        _wire, _connection_id, record_label, _raw_hash = _decode_record(
+            record, index
+        )
+        if label is None or record_label == label:
+            selected.append(record)
+    return selected
 
 
 def _decode_record(
@@ -317,6 +341,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--label", choices=("cold", "resumed", "synthetic"))
+    parser.add_argument("--expected-count", type=int)
     return parser
 
 
@@ -324,7 +350,10 @@ def main(argv=None) -> int:
     args = _parser().parse_args(argv)
     validate_raw_input_path(args.input)
     profile_data = json.loads(args.profile.read_text(encoding="utf-8"))
-    summary = summarize_records(load_jsonl(args.input), profile_data)
+    records = select_records(load_jsonl(args.input), args.label)
+    summary = summarize_records(
+        records, profile_data, expected_count=args.expected_count
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",

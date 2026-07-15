@@ -2,18 +2,30 @@ import hashlib
 import io
 import json
 import socket
+import ssl
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts.capture.capture_firefox import (
     FirefoxCaptureError,
+    capture_with_local_server,
+    orchestrate_capture,
+    render_certificate_override,
     render_user_js,
     validate_capture_url,
     validate_manifest_output,
     verify_firefox_binary,
 )
+from tests.fixtures.tls_capture_server import (
+    browser_sequence_response,
+    capture_tls_connection,
+    capture_label,
+    peek_client_hello,
+)
+from tests.fixtures.generate_certs import generate_fixture
 
 from tests.fixtures.capture_server import (
     CaptureError,
@@ -29,6 +41,278 @@ from tests.wire.helpers import synthetic_client_hello
 
 
 class CaptureServerTests(unittest.TestCase):
+    def test_peeks_a_client_hello_without_consuming_tls_bytes(self):
+        wire = synthetic_client_hello(split_at=23)
+        client, server = socket.socketpair()
+        try:
+            client.sendall(wire)
+
+            self.assertEqual(wire, peek_client_hello(server, timeout=1.0))
+            self.assertEqual(wire, server.recv(len(wire)))
+        finally:
+            client.close()
+            server.close()
+
+    def test_peek_waits_for_fragmented_client_hello_bytes(self):
+        wire = synthetic_client_hello(split_at=19)
+        client, server = socket.socketpair()
+
+        def send():
+            client.sendall(wire[:11])
+            threading.Event().wait(0.02)
+            client.sendall(wire[11:])
+
+        thread = threading.Thread(target=send)
+        thread.start()
+        try:
+            self.assertEqual(wire, peek_client_hello(server, timeout=1.0))
+            self.assertEqual(wire, server.recv(len(wire)))
+        finally:
+            client.close()
+            server.close()
+            thread.join(timeout=1.0)
+
+    def test_browser_sequence_responses_force_ordered_new_connections(self):
+        first = browser_sequence_response(1, 3)
+        second = browser_sequence_response(2, 3)
+        final = browser_sequence_response(3, 3)
+
+        self.assertIn(b'/.well-known/foxreq-capture/2.js', first)
+        self.assertIn(b'/.well-known/foxreq-capture/3.js', second)
+        self.assertNotIn(b'/.well-known/foxreq-capture/4.js', final)
+        for response in (first, second, final):
+            self.assertIn(b'Connection: close\r\n', response)
+
+    def test_resumption_sequence_labels_only_the_bootstrap_as_cold(self):
+        self.assertEqual("cold", capture_label("cold", 1))
+        self.assertEqual("cold", capture_label("cold", 9))
+        self.assertEqual("cold", capture_label("resumed", 1))
+        self.assertEqual("resumed", capture_label("resumed", 2))
+
+    def test_captures_then_completes_a_real_local_tls_exchange(self):
+        repository = Path(__file__).parents[2]
+        fixture_root = repository / "artifacts" / "fixtures" / "certs"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="tls-capture-test-", dir=str(fixture_root)
+        ) as directory:
+            fixture = Path(directory) / "material"
+            generate_fixture(fixture, repository=repository)
+            server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            server_context.set_alpn_protocols(["http/1.1"])
+            server_context.load_cert_chain(
+                fixture / "server.pem", fixture / "server.key"
+            )
+            client_context = ssl._create_unverified_context()
+            client_context.set_alpn_protocols(["http/1.1"])
+            client, server = socket.socketpair()
+            output = io.StringIO()
+            failure = []
+
+            def serve():
+                try:
+                    capture_tls_connection(
+                        server,
+                        server_context,
+                        output,
+                        sequence=1,
+                        count=1,
+                        mode="cold",
+                        timeout=2.0,
+                    )
+                except Exception as error:  # pragma: no cover - surfaced below
+                    failure.append(error)
+
+            thread = threading.Thread(target=serve)
+            thread.start()
+            try:
+                with client_context.wrap_socket(
+                    client, server_hostname="127.0.0.1"
+                ) as tls:
+                    tls.sendall(
+                        b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+                    )
+                    response = bytearray()
+                    while True:
+                        chunk = tls.recv(4096)
+                        if not chunk:
+                            break
+                        response.extend(chunk)
+            finally:
+                client.close()
+                thread.join(timeout=3.0)
+                server.close()
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual([], failure)
+            self.assertIn(b"HTTP/1.1 200 OK", response)
+            record = json.loads(output.getvalue())
+            self.assertEqual("cold", record["label"])
+            self.assertEqual("capture-000001", record["connection_id"])
+            self.assertTrue(record["record_hex"].startswith("16"))
+
+    def test_certificate_override_is_profile_local_and_deterministic(self):
+        certificate_der = b"ephemeral local certificate DER"
+        digest = hashlib.sha256(certificate_der).hexdigest().upper()
+        fingerprint = ":".join(
+            digest[offset : offset + 2] for offset in range(0, len(digest), 2)
+        )
+
+        rendered = render_certificate_override(
+            "127.0.0.1", 8443, certificate_der
+        )
+
+        self.assertIn("PSM Certificate Override Settings file", rendered)
+        self.assertIn(
+            "127.0.0.1:8443\tOID.2.16.840.1.101.3.4.2.1\t{}\t\n".format(
+                fingerprint
+            ),
+            rendered,
+        )
+
+    def test_resumed_firefox_capture_uses_one_profile_and_one_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "firefox.exe"
+            binary.write_bytes(b"pinned firefox")
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            profiles = []
+
+            def launch(
+                _binary,
+                _expected_sha256,
+                profile,
+                urls,
+                _timeout,
+                sequence_start,
+                expected_connections,
+                _capture_waiter,
+            ):
+                profiles.append(profile)
+                self.assertEqual(["https://127.0.0.1:8443/"], urls)
+                self.assertTrue((profile / "user.js").is_file())
+                self.assertTrue((profile / "cert_override.txt").is_file())
+                self.assertEqual(1, sequence_start)
+                self.assertEqual(3, expected_connections)
+                return {
+                    "sequence_start": 1,
+                    "expected_connections": 3,
+                    "timed_out": False,
+                    "exit_code": 0,
+                }
+
+            with mock.patch(
+                "scripts.capture.capture_firefox._launch", side_effect=launch
+            ) as patched:
+                manifest = orchestrate_capture(
+                    binary=binary,
+                    expected_sha256=digest,
+                    url="https://127.0.0.1:8443/",
+                    preferences={"network.trr.mode": 5},
+                    mode="resumed",
+                    count=3,
+                    timeout=2.0,
+                    certificate_der=b"server certificate DER",
+                )
+
+            self.assertEqual(1, patched.call_count)
+            self.assertEqual(1, len(profiles))
+            self.assertEqual(3, manifest["count"])
+
+    def test_firefox_capture_stops_before_launch_when_memory_is_low(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "firefox.exe"
+            binary.write_bytes(b"pinned firefox")
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            with mock.patch(
+                "scripts.capture.capture_firefox._available_physical_memory",
+                return_value=512 * 1024 * 1024,
+            ), mock.patch("scripts.capture.capture_firefox._launch") as launch:
+                with self.assertRaisesRegex(FirefoxCaptureError, "memory"):
+                    orchestrate_capture(
+                        binary=binary,
+                        expected_sha256=digest,
+                        url="https://127.0.0.1:8443/",
+                        preferences={},
+                        mode="cold",
+                        count=1,
+                        timeout=2.0,
+                        minimum_available_memory=1024 * 1024 * 1024,
+                    )
+            launch.assert_not_called()
+
+    def test_local_capture_orchestrator_collects_a_resumption_sequence(self):
+        repository = Path(__file__).parents[2]
+        fixture_root = repository / "artifacts" / "fixtures" / "certs"
+        capture_root = repository / "artifacts" / "captures"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        capture_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="firefox-suite-cert-", dir=str(fixture_root)
+        ) as certificate_directory, tempfile.TemporaryDirectory(
+            prefix="firefox-suite-raw-", dir=str(capture_root)
+        ) as capture_directory:
+            fixture = Path(certificate_directory) / "material"
+            generate_fixture(fixture, repository=repository)
+            binary = Path(capture_directory) / "firefox.exe"
+            binary.write_bytes(b"pinned firefox")
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+
+            def launch(
+                _binary,
+                _expected_sha256,
+                _profile,
+                _urls,
+                _timeout,
+                _sequence_start,
+                expected_connections,
+                _capture_waiter,
+            ):
+                context = ssl._create_unverified_context()
+                context.set_alpn_protocols(["http/1.1"])
+                for _ in range(expected_connections):
+                    with socket.create_connection(
+                        ("127.0.0.1", port), timeout=2.0
+                    ) as connection, context.wrap_socket(
+                        connection, server_hostname="127.0.0.1"
+                    ) as tls:
+                        tls.sendall(
+                            b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                            b"Connection: close\r\n\r\n"
+                        )
+                        while tls.recv(4096):
+                            pass
+                return {
+                    "sequence_start": 1,
+                    "expected_connections": expected_connections,
+                    "timed_out": False,
+                    "exit_code": 0,
+                }
+
+            raw_output = Path(capture_directory) / "resumed.jsonl"
+            with mock.patch(
+                "scripts.capture.capture_firefox._launch", side_effect=launch
+            ):
+                manifest = capture_with_local_server(
+                    binary=binary,
+                    expected_sha256=digest,
+                    url="https://127.0.0.1:{}/".format(port),
+                    preferences={"network.trr.mode": 5},
+                    mode="resumed",
+                    count=3,
+                    timeout=2.0,
+                    certificate=fixture / "server.pem",
+                    private_key=fixture / "server.key",
+                    certificate_der=(fixture / "server.der").read_bytes(),
+                    raw_output=raw_output,
+                )
+
+            records = [json.loads(line) for line in raw_output.read_text().splitlines()]
+            self.assertEqual(3, manifest["count"])
+            self.assertEqual(["cold", "resumed", "resumed"], [item["label"] for item in records])
+
     def test_reassembles_records_and_arbitrary_recv_fragments(self):
         wire = synthetic_client_hello(split_at=19)
 

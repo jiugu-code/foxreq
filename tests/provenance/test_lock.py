@@ -49,6 +49,18 @@ def _profile_lock():
                 "windows-x86_64": "firefox-windows-x86_64-en-us",
                 "linux-x86_64": "firefox-linux-x86_64-en-us",
             },
+            "binary_evidence": {
+                "windows-x86_64": {
+                    "filename": "firefox.exe",
+                    "sha256": "4" * 64,
+                    "size": 1234,
+                },
+                "linux-x86_64": {
+                    "filename": "firefox",
+                    "sha256": "5" * 64,
+                    "size": 2345,
+                },
+            },
         },
         "components": {
             "nss": {
@@ -116,6 +128,10 @@ class ProvenanceLockTests(unittest.TestCase):
 
         self.assertEqual(sources["firefox-source"]["size"], 3)
         self.assertEqual(profile["firefox"]["version"], "152.0.6")
+        self.assertEqual(
+            profile["firefox"]["binary_evidence"]["windows-x86_64"]["sha256"],
+            "4" * 64,
+        )
 
     def test_unknown_and_missing_keys_are_rejected(self):
         lock = _source_lock()
@@ -197,6 +213,7 @@ class ProvenanceLockTests(unittest.TestCase):
         profile["deferred_platforms"] = ["linux-x86_64"]
         del profile["builds"]["linux-x86_64"]
         del profile["capture"]["operating_systems"]["linux-x86_64"]
+        del profile["firefox"]["binary_evidence"]["linux-x86_64"]
         self._write(self.profile_path, profile)
 
         loaded = load_profile_lock(self.profile_path, sources, self.root)

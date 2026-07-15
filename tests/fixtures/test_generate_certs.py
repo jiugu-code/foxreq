@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 
 from tests.fixtures.generate_certs import generate_fixture
 
@@ -18,6 +19,10 @@ class GenerateCertificatesTests(unittest.TestCase):
             generate_fixture(expired, repository=repository, variant="expired")
             expired_certificate = x509.load_pem_x509_certificate(
                 (expired / "server.pem").read_bytes()
+            )
+            self.assertEqual(
+                expired_certificate.public_bytes(serialization.Encoding.DER),
+                (expired / "server.der").read_bytes(),
             )
             self.assertLess(expired_certificate.not_valid_after, datetime.datetime.utcnow())
 

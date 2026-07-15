@@ -298,6 +298,27 @@ static int load_locked(wchar_t *directory) {
       global_runtime.nss3, "PR_Poll");
   foxreq_real_api.ssl_import_fd = (foxreq_ssl_import_fd_fn)require_symbol(
       global_runtime.nss3, "SSL_ImportFD");
+  foxreq_real_api.ssl_get_implemented_ciphers =
+      (foxreq_ssl_get_implemented_ciphers_fn)require_symbol(
+          global_runtime.nss3, "SSL_GetImplementedCiphers");
+  foxreq_real_api.ssl_get_num_implemented_ciphers =
+      (foxreq_ssl_get_num_implemented_ciphers_fn)require_symbol(
+          global_runtime.nss3, "SSL_GetNumImplementedCiphers");
+  foxreq_real_api.ssl_cipher_pref_set =
+      (foxreq_ssl_cipher_pref_set_fn)require_symbol(global_runtime.nss3,
+                                                    "SSL_CipherPrefSet");
+  foxreq_real_api.ssl_signature_scheme_pref_set =
+      (foxreq_ssl_signature_scheme_pref_set_fn)require_symbol(
+          global_runtime.nss3, "SSL_SignatureSchemePrefSet");
+  foxreq_real_api.ssl_named_group_config =
+      (foxreq_ssl_named_group_config_fn)require_symbol(
+          global_runtime.nss3, "SSL_NamedGroupConfig");
+  foxreq_real_api.ssl_send_additional_key_shares =
+      (foxreq_ssl_send_additional_key_shares_fn)require_symbol(
+          global_runtime.nss3, "SSL_SendAdditionalKeyShares");
+  foxreq_real_api.ssl_get_experimental_api =
+      (foxreq_ssl_get_experimental_api_fn)require_symbol(
+          global_runtime.nss3, "SSL_GetExperimentalAPI");
   foxreq_real_api.ssl_option_set = (foxreq_ssl_option_set_fn)require_symbol(
       global_runtime.nss3, "SSL_OptionSet");
   foxreq_real_api.ssl_set_url = (foxreq_ssl_set_url_fn)require_symbol(
@@ -342,6 +363,13 @@ static int load_locked(wchar_t *directory) {
       foxreq_real_api.pr_get_socket_option == NULL ||
       foxreq_real_api.pr_poll == NULL ||
       foxreq_real_api.ssl_import_fd == NULL ||
+      foxreq_real_api.ssl_get_implemented_ciphers == NULL ||
+      foxreq_real_api.ssl_get_num_implemented_ciphers == NULL ||
+      foxreq_real_api.ssl_cipher_pref_set == NULL ||
+      foxreq_real_api.ssl_signature_scheme_pref_set == NULL ||
+      foxreq_real_api.ssl_named_group_config == NULL ||
+      foxreq_real_api.ssl_send_additional_key_shares == NULL ||
+      foxreq_real_api.ssl_get_experimental_api == NULL ||
       foxreq_real_api.ssl_option_set == NULL ||
       foxreq_real_api.ssl_set_url == NULL ||
       foxreq_real_api.ssl_version_range_set == NULL ||

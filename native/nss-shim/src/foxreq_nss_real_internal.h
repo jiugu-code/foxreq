@@ -27,6 +27,20 @@ typedef struct foxreq_sec_item {
   unsigned char *data;
   unsigned int length;
 } foxreq_sec_item;
+typedef int(__cdecl *foxreq_nss_certificate_decoder_fn)(
+    const uint8_t *input, size_t input_length, uint8_t *output,
+    size_t output_length, size_t *used_length);
+typedef int(__cdecl *foxreq_ssl_certificate_encode_fn)(
+    const foxreq_sec_item *input, foxreq_sec_item *output);
+typedef int(__cdecl *foxreq_ssl_certificate_decode_fn)(
+    const foxreq_sec_item *input, unsigned char *output, size_t output_length,
+    size_t *used_length);
+typedef struct foxreq_ssl_certificate_compression_algorithm {
+  uint16_t id;
+  const char *name;
+  foxreq_ssl_certificate_encode_fn encode;
+  foxreq_ssl_certificate_decode_fn decode;
+} foxreq_ssl_certificate_compression_algorithm;
 typedef struct foxreq_cert_trust {
   unsigned int ssl_flags;
   unsigned int email_flags;
@@ -71,6 +85,23 @@ typedef int32_t(__cdecl *foxreq_pr_poll_fn)(foxreq_pr_poll_desc *descriptors,
                                           int count, uint32_t timeout);
 typedef foxreq_pr_file_desc *(__cdecl *foxreq_ssl_import_fd_fn)(
     foxreq_pr_file_desc *model, foxreq_pr_file_desc *fd);
+typedef const uint16_t *(__cdecl *foxreq_ssl_get_implemented_ciphers_fn)(void);
+typedef uint16_t(__cdecl *foxreq_ssl_get_num_implemented_ciphers_fn)(void);
+typedef int(__cdecl *foxreq_ssl_cipher_pref_set_fn)(foxreq_pr_file_desc *fd,
+                                                    int32_t cipher,
+                                                    int enabled);
+typedef int(__cdecl *foxreq_ssl_signature_scheme_pref_set_fn)(
+    foxreq_pr_file_desc *fd, const int32_t *schemes, unsigned int count);
+typedef int(__cdecl *foxreq_ssl_named_group_config_fn)(
+    foxreq_pr_file_desc *fd, const int32_t *groups, unsigned int count);
+typedef int(__cdecl *foxreq_ssl_send_additional_key_shares_fn)(
+    foxreq_pr_file_desc *fd, unsigned int count);
+typedef void *(__cdecl *foxreq_ssl_get_experimental_api_fn)(const char *name);
+typedef int(__cdecl *foxreq_ssl_enable_grease_ech_fn)(foxreq_pr_file_desc *fd,
+                                                      int enabled);
+typedef int(__cdecl *foxreq_ssl_set_certificate_compression_fn)(
+    foxreq_pr_file_desc *fd,
+    foxreq_ssl_certificate_compression_algorithm algorithm);
 typedef int(__cdecl *foxreq_ssl_option_set_fn)(foxreq_pr_file_desc *fd,
                                               int32_t option, int enabled);
 typedef int(__cdecl *foxreq_ssl_set_url_fn)(foxreq_pr_file_desc *fd,
@@ -117,6 +148,13 @@ typedef struct foxreq_nss_api {
   foxreq_pr_get_socket_option_fn pr_get_socket_option;
   foxreq_pr_poll_fn pr_poll;
   foxreq_ssl_import_fd_fn ssl_import_fd;
+  foxreq_ssl_get_implemented_ciphers_fn ssl_get_implemented_ciphers;
+  foxreq_ssl_get_num_implemented_ciphers_fn ssl_get_num_implemented_ciphers;
+  foxreq_ssl_cipher_pref_set_fn ssl_cipher_pref_set;
+  foxreq_ssl_signature_scheme_pref_set_fn ssl_signature_scheme_pref_set;
+  foxreq_ssl_named_group_config_fn ssl_named_group_config;
+  foxreq_ssl_send_additional_key_shares_fn ssl_send_additional_key_shares;
+  foxreq_ssl_get_experimental_api_fn ssl_get_experimental_api;
   foxreq_ssl_option_set_fn ssl_option_set;
   foxreq_ssl_set_url_fn ssl_set_url;
   foxreq_ssl_version_range_set_fn ssl_version_range_set;
@@ -177,5 +215,18 @@ foxreq_nss_result foxreq_real_buffer_create(const uint8_t *data, size_t length,
 foxreq_nss_result foxreq_real_configure_profile(
     foxreq_nss_connection *connection,
     const foxreq_nss_connect_options *options);
+foxreq_nss_result foxreq_nss_register_certificate_decoders(
+    foxreq_nss_runtime *runtime, foxreq_nss_certificate_decoder_fn zlib,
+    foxreq_nss_certificate_decoder_fn brotli,
+    foxreq_nss_certificate_decoder_fn zstd);
+int __cdecl foxreq_real_decode_zlib_certificate(
+    const foxreq_sec_item *input, unsigned char *output, size_t output_length,
+    size_t *used_length);
+int __cdecl foxreq_real_decode_brotli_certificate(
+    const foxreq_sec_item *input, unsigned char *output, size_t output_length,
+    size_t *used_length);
+int __cdecl foxreq_real_decode_zstd_certificate(
+    const foxreq_sec_item *input, unsigned char *output, size_t output_length,
+    size_t *used_length);
 
 #endif

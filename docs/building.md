@@ -57,6 +57,7 @@ Run real-backend tests serially:
 
 ```powershell
 $env:FOXREQ_NSS_RUNTIME_DIR = (Resolve-Path .cache/firefox-runtime/core).Path
+$env:CARGO_BUILD_JOBS = "1"
 cargo test -p foxreq-core --features nss-real
 python -m scripts.runtime.test_real_tls --runtime .cache/firefox-runtime/core
 ```
@@ -65,6 +66,26 @@ The second command is the required loopback orchestrator for the ignored real
 TLS cases. It generates short-lived certificate material only below the
 ignored `artifacts/fixtures/certs` directory and runs each server/test pair one
 at a time.
+
+The capture orchestrators also run Cargo with one build job. Their CLI default
+refuses to start when less than 4096 MiB of physical memory is available. Raw
+captures, private fixture keys, and temporary Firefox profiles remain below
+ignored `artifacts` paths. Do not lower the threshold on a shared workstation
+without checking the other applications already running.
+
+The Firefox 152 profile advertises certificate decompression algorithms in the
+same order as Firefox: zlib, Brotli, and Zstandard. Decoding stays bounded by
+the NSS-provided output buffer and C-to-Rust callbacks catch errors and panics.
+The optional pure-Rust dependencies are pinned in `Cargo.lock`:
+
+- `flate2` 1.1.9 (`MIT OR Apache-2.0`), using its Rust backend;
+- `brotli-decompressor` 5.0.3 (`BSD-3-Clause/MIT`);
+- `ruzstd` 0.8.3 (`MIT`).
+
+Their transitive dependencies are likewise permissively licensed. Package
+manifests in the downloaded Cargo registry remain the authority for license
+metadata; packaging work must generate the final third-party notices from the
+locked dependency graph.
 
 ## Linux developer baseline
 
@@ -94,4 +115,6 @@ The fake backend does not open sockets, perform TLS, or reproduce a Firefox
 fingerprint, and must never be presented as a working request transport. The
 `nss-real` feature loads only the hash-pinned Firefox runtime from an explicit
 directory. Windows lifecycle, ALPN, certificate, deadline, and HTTPS/1.1 local
-fixture tests pass; Firefox wire matching remains a separate evidence gate.
+fixture tests pass. Low-count cold and resumed wire smoke comparisons are kept
+separate from the required 100-handshake Firefox golden gate; they do not mark
+that gate as passed.

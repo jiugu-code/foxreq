@@ -112,6 +112,10 @@ def generate_fixture(
         server.public_bytes(serialization.Encoding.PEM),
     )
     _write(
+        output / "server.der",
+        server.public_bytes(serialization.Encoding.DER),
+    )
+    _write(
         output / "server.key",
         server_key.private_bytes(
             serialization.Encoding.PEM,

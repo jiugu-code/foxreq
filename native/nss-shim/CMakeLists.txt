@@ -19,6 +19,7 @@ if(FOXREQ_NSS_REAL)
   foxreq_configure_pinned_nss(pinned_include_dir)
   add_library(
     foxreq_nss STATIC
+    src/compression.c
     src/connection.c
     src/error.c
     src/profile.c
@@ -46,4 +47,16 @@ if(BUILD_TESTING AND FOXREQ_NSS_STUB)
   target_link_libraries(foxreq_nss_abi_test PRIVATE foxreq_nss)
   foxreq_apply_c_policy(foxreq_nss_abi_test)
   add_test(NAME foxreq_nss_abi COMMAND foxreq_nss_abi_test)
+endif()
+
+if(BUILD_TESTING AND FOXREQ_NSS_REAL)
+  add_executable(foxreq_nss_profile_test tests/test_profile.c)
+  target_include_directories(
+    foxreq_nss_profile_test
+    PRIVATE
+      "${CMAKE_CURRENT_LIST_DIR}/src"
+  )
+  target_link_libraries(foxreq_nss_profile_test PRIVATE foxreq_nss)
+  foxreq_apply_c_policy(foxreq_nss_profile_test)
+  add_test(NAME foxreq_nss_profile COMMAND foxreq_nss_profile_test)
 endif()

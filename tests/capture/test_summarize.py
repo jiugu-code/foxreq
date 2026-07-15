@@ -101,6 +101,23 @@ class SummarizeCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(SummaryError, "capture_count"):
             summarize_records([record("capture-000001", wire)], profile())
 
+    def test_can_summarize_only_the_resumed_samples_after_bootstrap(self):
+        wire = synthetic_client_hello(extension(41, b"\x00\x00\x00\x00"))
+        records = [
+            record("capture-000002", wire, label="resumed"),
+            record("capture-000003", wire, label="resumed"),
+        ]
+
+        summary = summarize_records(
+            records,
+            profile(capture_count=100),
+            expected_count=2,
+        )
+
+        self.assertEqual(100, summary["profile"]["capture_count"])
+        self.assertEqual(2, summary["sample_count"])
+        self.assertEqual({"resumed": 2}, summary["labels"])
+
     def test_tracked_schema_is_strict_and_describes_normalized_output(self):
         path = (
             Path(__file__).parents[2]

@@ -1,3 +1,5 @@
+#[cfg(feature = "nss-real")]
+mod compression;
 mod error;
 mod ffi;
 
@@ -81,9 +83,14 @@ impl Runtime {
         let trust_anchor_der = config.trust_anchor_der.unwrap_or_default();
         let raw = ffi::runtime_create(runtime_dir.as_bytes(), trust_anchor_der)
             .map_err(|code| error_from_code(code, "pinned native runtime creation failed"))?;
-        Ok(Self {
+        let runtime = Self {
             inner: Rc::new(RuntimeInner { raw }),
-        })
+        };
+        #[cfg(feature = "nss-real")]
+        compression::register(runtime.inner.raw).map_err(|code| {
+            error_from_code(code, "certificate decompressor registration failed")
+        })?;
+        Ok(runtime)
     }
 
     pub fn versions(&self) -> Result<RuntimeVersions, TlsError> {

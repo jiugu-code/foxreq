@@ -10,6 +10,13 @@
     "artifacts": {
       "windows-x86_64": "firefox-windows-x86_64-en-us",
       "linux-x86_64": "firefox-linux-x86_64-en-us"
+    },
+    "binary_evidence": {
+      "windows-x86_64": {
+        "filename": "firefox.exe",
+        "sha256": "02f15ade493df6e9cafea1303e443b02ac658a0dc4fa56480d1c6c9441637667",
+        "size": 705152
+      }
     }
   },
   "components": {
@@ -58,6 +65,7 @@
       "app.update.auto": false,
       "browser.shell.checkDefaultBrowser": false,
       "datareporting.healthreport.uploadEnabled": false,
+      "network.http.speculative-parallel-limit": 0,
       "network.http.http3.enable": false,
       "network.trr.mode": 5,
       "toolkit.telemetry.enabled": false

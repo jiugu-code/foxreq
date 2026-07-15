@@ -14,6 +14,10 @@ pub(super) const RESULT_STATE: u32 = 3;
 pub(super) const RESULT_BUFFER_TOO_SMALL: u32 = 9;
 pub(super) const RESULT_END_OF_STREAM: u32 = 10;
 
+#[cfg(feature = "nss-real")]
+pub(super) type RawCertificateDecoder =
+    unsafe extern "C" fn(*const u8, usize, *mut u8, usize, *mut usize) -> i32;
+
 #[cfg(not(feature = "nss-real"))]
 const STUB_OPERATION_READ: u32 = 1;
 #[cfg(not(feature = "nss-real"))]
@@ -119,6 +123,14 @@ unsafe extern "C" {
         runtime: *mut RawRuntime,
         out_nss_version: *mut *mut RawBuffer,
         out_nspr_version: *mut *mut RawBuffer,
+    ) -> u32;
+    #[cfg(feature = "nss-real")]
+    #[link_name = "foxreq_nss_register_certificate_decoders"]
+    fn raw_register_certificate_decoders(
+        runtime: *mut RawRuntime,
+        zlib: RawCertificateDecoder,
+        brotli: RawCertificateDecoder,
+        zstd: RawCertificateDecoder,
     ) -> u32;
     #[link_name = "foxreq_nss_session_cache_create"]
     fn raw_session_cache_create(
@@ -314,6 +326,17 @@ pub(super) fn runtime_versions(runtime: NonNull<RawRuntime>) -> Result<(Vec<u8>,
 
 pub(super) fn runtime_free(runtime: NonNull<RawRuntime>) {
     unsafe { raw_runtime_free(runtime.as_ptr()) };
+}
+
+#[cfg(feature = "nss-real")]
+pub(super) fn register_certificate_decoders(
+    runtime: NonNull<RawRuntime>,
+    zlib: RawCertificateDecoder,
+    brotli: RawCertificateDecoder,
+    zstd: RawCertificateDecoder,
+) -> Result<(), u32> {
+    let code = unsafe { raw_register_certificate_decoders(runtime.as_ptr(), zlib, brotli, zstd) };
+    code_result(code)
 }
 
 pub(super) fn session_cache_create(

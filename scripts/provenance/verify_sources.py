@@ -279,6 +279,7 @@ def load_profile_lock(path, sources, repo_root):
         raise LockError("profile lock schema_version must be 1")
     if not isinstance(root["profile"], str) or not _PROFILE_RE.fullmatch(root["profile"]):
         raise LockError("profile must be an immutable firefox_<major> name")
+    _validate_deferred_platforms(root["deferred_platforms"])
 
     firefox = root["firefox"]
     _exact_keys(
@@ -290,6 +291,7 @@ def load_profile_lock(path, sources, repo_root):
             "release_revision",
             "source_id",
             "artifacts",
+            "binary_evidence",
         },
         "firefox",
     )
@@ -311,11 +313,22 @@ def load_profile_lock(path, sources, repo_root):
     _exact_keys(firefox["artifacts"], set(_PLATFORMS), "firefox.artifacts")
     for platform, source_id in firefox["artifacts"].items():
         _validate_source_ref(source_id, sources, "firefox.artifacts." + platform)
+    expected_binaries = set(_PLATFORMS) - set(root["deferred_platforms"])
+    _exact_keys(
+        firefox["binary_evidence"], expected_binaries, "firefox.binary_evidence"
+    )
+    for platform, evidence in firefox["binary_evidence"].items():
+        path = "firefox.binary_evidence." + platform
+        _exact_keys(evidence, {"filename", "sha256", "size"}, path)
+        expected_filename = "firefox.exe" if platform == "windows-x86_64" else "firefox"
+        if evidence["filename"] != expected_filename:
+            raise LockError(path + ".filename is invalid")
+        _validate_sha256(evidence["sha256"], path + ".sha256")
+        _validate_positive_int(evidence["size"], path + ".size")
 
     _exact_keys(root["components"], {"nss", "nspr"}, "components")
     _validate_component("nss", root["components"]["nss"], sources)
     _validate_component("nspr", root["components"]["nspr"], sources)
-    _validate_deferred_platforms(root["deferred_platforms"])
     _validate_builds(root["builds"], root["deferred_platforms"])
     _validate_patches(root["patches"], repo_root)
     _validate_capture(root["capture"], root["deferred_platforms"])
