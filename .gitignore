@@ -1,1 +1,12 @@
 .worktrees/
+__pycache__/
+*.py[cod]
+.coverage
+.pytest_cache/
+target/
+dist/
+*.pcap
+*.pcapng
+*.keylog
+*.pem
+*.key
