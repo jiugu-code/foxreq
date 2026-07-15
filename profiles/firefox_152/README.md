@@ -16,6 +16,10 @@ their SHA-256 values are pinned in `third_party/native-sources.lock.json`.
 - Official archive identities: locked; local byte verification is required by
   `scripts/provenance/verify_sources.py`.
 - Windows compiler identity: verified during native workspace bootstrap.
+- Windows Firefox runtime: the four required NSS modules were extracted from
+  the locked Firefox 152.0.6 installer, hash-verified, and exercised through
+  repeated initialization and local TLS tests. This is a Windows G3 result,
+  not wire-match evidence.
 - Linux compiler and runtime verification: explicitly deferred by the user for
   the current Windows-local phase; this is not a Linux pass result.
 - Firefox cold/resumed golden captures: not captured yet.

@@ -32,6 +32,7 @@ impl TlsErrorKind {
         }
     }
 
+    #[cfg(not(feature = "nss-real"))]
     pub(crate) const fn as_raw(self) -> u32 {
         match self {
             Self::InvalidArgument => 1,

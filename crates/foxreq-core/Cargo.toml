@@ -8,5 +8,6 @@ publish = false
 [features]
 default = []
 nss = []
+nss-real = ["nss"]
 
 [dependencies]

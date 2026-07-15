@@ -176,6 +176,32 @@ void foxreq_nss_runtime_free(foxreq_nss_runtime *runtime) {
   free(runtime);
 }
 
+foxreq_nss_result foxreq_nss_runtime_versions(
+    foxreq_nss_runtime *runtime, foxreq_nss_buffer **out_nss_version,
+    foxreq_nss_buffer **out_nspr_version) {
+  static const uint8_t nss_version[] = "fake-nss";
+  static const uint8_t nspr_version[] = "fake-nspr";
+  foxreq_nss_result result;
+  if (!runtime_is_valid(runtime) || out_nss_version == NULL ||
+      out_nspr_version == NULL) {
+    return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
+  }
+  *out_nss_version = NULL;
+  *out_nspr_version = NULL;
+  result = buffer_create(nss_version, sizeof(nss_version) - 1U,
+                         out_nss_version);
+  if (result != FOXREQ_NSS_RESULT_OK) {
+    return result;
+  }
+  result = buffer_create(nspr_version, sizeof(nspr_version) - 1U,
+                         out_nspr_version);
+  if (result != FOXREQ_NSS_RESULT_OK) {
+    foxreq_nss_buffer_free(*out_nss_version);
+    *out_nss_version = NULL;
+  }
+  return result;
+}
+
 foxreq_nss_result foxreq_nss_session_cache_create(
     foxreq_nss_runtime *runtime,
     const foxreq_nss_session_cache_options *options,

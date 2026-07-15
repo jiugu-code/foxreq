@@ -1,4 +1,4 @@
-#![cfg(feature = "nss")]
+#![cfg(all(feature = "nss", not(feature = "nss-real")))]
 
 use std::time::Duration;
 

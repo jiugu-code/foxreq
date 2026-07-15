@@ -1,7 +1,8 @@
 # foxreq NSS/HTTP/1.1 Transport Implementation Plan
 
-> Status: ready for execution after the wire-evidence foundation was merged to
-> `master` at commit `528c610`.
+> Status: Windows execution in progress. Tasks 1-7 are complete and committed
+> on the feature branch. Task 8 is next. Linux verification is explicitly
+> deferred by the user and is not a pass result.
 
 **Goal:** Build and prove a pinned NSS/NSPR TLS transport whose observable
 ClientHello behavior can be compared with the Firefox 152.0.6 baseline, then
@@ -412,15 +413,18 @@ private material is tracked.
 
 **Files:**
 
+- Create: `third_party/firefox-windows-runtime.lock.json`
 - Create: `native/nss-shim/cmake/FindPinnedNSS.cmake`
 - Create: `native/nss-shim/src/runtime.c`
 - Create: `native/nss-shim/src/connection.c`
 - Create: `native/nss-shim/src/profile.c`
 - Create: `native/nss-shim/src/verify.c`
 - Create: `native/nss-shim/src/error.c`
-- Create: `native/nss-shim/tests/test_runtime.c`
-- Create: `native/nss-shim/tests/test_local_tls.c`
-- Create: `crates/foxreq-core/tests/nss_local_tls.rs`
+- Create: `crates/foxreq-core/tests/nss_real_runtime.rs`
+- Create: `crates/foxreq-core/tests/nss_real_local_tls.rs`
+- Create: `scripts/runtime/prepare_firefox_runtime.py`
+- Create: `scripts/runtime/test_real_tls.py`
+- Create: `tests/fixtures/generate_certs.py`
 - Modify: `native/nss-shim/CMakeLists.txt`
 - Modify: `crates/foxreq-core/build.rs`
 
@@ -437,12 +441,15 @@ Against the local TLS fixture, test:
 - session-cache enabled/disabled behavior;
 - stable foxreq category plus NSS and NSPR numeric evidence.
 
-**Step 2: Link only the verified pinned build.**
+**Step 2: Load only the verified Firefox-shipped runtime on Windows.**
 
-`FindPinnedNSS.cmake` must compare discovered headers/libraries and the recorded
-build receipt to the provenance lock. It must fail on system NSS, unknown paths,
-or hash mismatches. Use origin-private dynamic loading rules later during wheel
-packaging; do not solve packaging in this task.
+For the Windows fingerprint target, the exact NSS/NSPR build shipped inside the
+locked Firefox 152.0.6 installer is the authoritative runtime. The preparation
+script uses the installer's extraction-only mode and copies four locked DLLs.
+`FindPinnedNSS.cmake` generates the expected hash/size table; the shim verifies
+every file before restricted-path loading and rejects system NSS, reparse
+points, unknown paths, version mismatches, and hash mismatches. Origin-private
+wheel packaging remains a later task.
 
 **Step 3: Implement exported-API configuration.**
 
@@ -458,11 +465,19 @@ Expose host and operation names only when safe. Never include request headers,
 cookies, auth values, certificate private material, or body bytes in error or
 debug output.
 
-**Step 5: Verify G3.**
+**Step 5: Verify Windows G3.**
 
 Run the C and Rust integration suites repeatedly, including a 1,000-iteration
-runtime/connect/close loop. Check handle counts before and after on Windows and
-file-descriptor counts on Linux.
+runtime/connect/close loop. Check for residual build/server processes and
+memory pressure on Windows. Linux file-descriptor and runtime verification is
+deferred, not passed.
+
+Windows evidence recorded during implementation: exact NSS 3.124 and NSPR
+4.39 versions; 1,000 runtime teardown cycles; concurrent acquisition; trusted,
+untrusted, expired, hostname-mismatch and invalid-DER certificate cases; ALPN
+`http/1.1`; HTTP exchange and peer close; nonblocking handshake/read deadlines;
+and stable category plus NSS/NSPR numeric errors. Session-resumption wire
+evidence remains part of Task 8.
 
 **Step 6: Commit.**
 

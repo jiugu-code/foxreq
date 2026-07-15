@@ -1,7 +1,7 @@
 mod error;
 mod ffi;
 
-use std::{fmt, ptr::NonNull, rc::Rc, time::Duration};
+use std::{fmt, path::Path, ptr::NonNull, rc::Rc, time::Duration};
 
 pub use error::{TlsError, TlsErrorKind};
 
@@ -19,6 +19,18 @@ pub struct ConnectConfig<'a> {
     pub profile_id: &'a str,
     pub alpn_wire: &'a [u8],
     pub verification: RequestVerification,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RuntimeConfig<'a> {
+    pub runtime_dir: &'a Path,
+    pub trust_anchor_der: Option<&'a [u8]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeVersions {
+    pub nss: String,
+    pub nspr: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,11 +58,43 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new() -> Result<Self, TlsError> {
-        let raw = ffi::runtime_create()
+        let raw = ffi::runtime_create(&[], &[])
             .map_err(|code| error_from_code(code, "native runtime creation failed"))?;
         Ok(Self {
             inner: Rc::new(RuntimeInner { raw }),
         })
+    }
+
+    pub fn new_with_config(config: RuntimeConfig<'_>) -> Result<Self, TlsError> {
+        let runtime_dir = config.runtime_dir.to_str().ok_or_else(|| {
+            TlsError::local(
+                TlsErrorKind::InvalidArgument,
+                "runtime directory must be valid Unicode",
+            )
+        })?;
+        if runtime_dir.is_empty() || runtime_dir.as_bytes().contains(&0) {
+            return Err(TlsError::local(
+                TlsErrorKind::InvalidArgument,
+                "runtime directory must be non-empty and contain no NUL",
+            ));
+        }
+        let trust_anchor_der = config.trust_anchor_der.unwrap_or_default();
+        let raw = ffi::runtime_create(runtime_dir.as_bytes(), trust_anchor_der)
+            .map_err(|code| error_from_code(code, "pinned native runtime creation failed"))?;
+        Ok(Self {
+            inner: Rc::new(RuntimeInner { raw }),
+        })
+    }
+
+    pub fn versions(&self) -> Result<RuntimeVersions, TlsError> {
+        let (nss, nspr) = ffi::runtime_versions(self.inner.raw)
+            .map_err(|code| error_from_code(code, "native version query failed"))?;
+        let nss = String::from_utf8(nss)
+            .map_err(|_| TlsError::local(TlsErrorKind::State, "native NSS version is not UTF-8"))?;
+        let nspr = String::from_utf8(nspr).map_err(|_| {
+            TlsError::local(TlsErrorKind::State, "native NSPR version is not UTF-8")
+        })?;
+        Ok(RuntimeVersions { nss, nspr })
     }
 
     pub fn session_cache(&self, capacity: u32) -> Result<SessionCache, TlsError> {
@@ -90,8 +134,19 @@ impl Runtime {
             verification_mode,
             session_cache: cache.map(|cache| cache.inner.raw),
         };
-        let raw = ffi::connect(self.inner.raw, &arguments)
-            .map_err(|code| error_from_code(code, "native connection failed"))?;
+        let raw = ffi::connect(self.inner.raw, &arguments).map_err(|failure| {
+            if let Some(detail) = failure.detail {
+                if detail.category == failure.code {
+                    return TlsError::foreign(
+                        TlsErrorKind::from_raw(failure.code),
+                        detail.nss_code,
+                        detail.nspr_code,
+                        &detail.message,
+                    );
+                }
+            }
+            error_from_code(failure.code, "native connection failed")
+        })?;
         Ok(Connection {
             raw,
             _runtime: Rc::clone(&self.inner),
@@ -263,6 +318,7 @@ fn error_from_code(code: u32, message: &'static str) -> TlsError {
     TlsError::local(TlsErrorKind::from_raw(code), message)
 }
 
+#[cfg(not(feature = "nss-real"))]
 #[doc(hidden)]
 pub mod testing {
     use std::sync::{Mutex, MutexGuard};

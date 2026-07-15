@@ -23,12 +23,48 @@ Run the fail-closed check from a normal PowerShell process:
 & .\scripts\check_toolchain.ps1
 ```
 
-The native stub can be configured before pinned NSS sources are acquired:
+The native stub can be configured before the pinned Firefox runtime is
+prepared:
 
 ```powershell
 cmake -S native/nss-shim -B build/nss-shim-smoke -G Ninja -DFOXREQ_NSS_STUB=ON
 cmake --build build/nss-shim-smoke
 ```
+
+### Pinned Firefox NSS runtime
+
+The Windows real backend uses the NSS/NSPR DLLs shipped by the exact locked
+Firefox installer. This keeps the TLS implementation aligned with the browser
+build under comparison and avoids silently substituting system NSS. The
+installer and every copied DLL are checked by size and SHA-256.
+
+After fetching the locked installer into `.cache/sources`, prepare the minimal
+four-file runtime without installing Firefox:
+
+```powershell
+python -m scripts.runtime.prepare_firefox_runtime `
+  --installer .cache/sources/firefox-152.0.6-windows-x86_64-en-us.exe `
+  --output .cache/firefox-runtime/core
+```
+
+The script uses Mozilla's documented
+[`/ExtractDir` mode](https://firefox-source-docs.mozilla.org/browser/installer/windows/installer/FullConfig.html),
+copies only the files listed in
+`third_party/firefox-windows-runtime.lock.json`, and fails rather than
+overwriting an existing output directory.
+
+Run real-backend tests serially:
+
+```powershell
+$env:FOXREQ_NSS_RUNTIME_DIR = (Resolve-Path .cache/firefox-runtime/core).Path
+cargo test -p foxreq-core --features nss-real
+python -m scripts.runtime.test_real_tls --runtime .cache/firefox-runtime/core
+```
+
+The second command is the required loopback orchestrator for the ignored real
+TLS cases. It generates short-lived certificate material only below the
+ignored `artifacts/fixtures/certs` directory and runs each server/test pair one
+at a time.
 
 ## Linux developer baseline
 
@@ -50,11 +86,12 @@ an excuse to install unverified packages or to disable certificate checking.
 ## Current native boundary
 
 `FOXREQ_NSS_STUB=ON` builds a deterministic fake backend for ABI and ownership
-tests. The Rust `nss` feature currently links this fake backend and exercises
+tests. The Rust `nss` feature links this fake backend and exercises
 runtime, connection, session-cache, byte-buffer, partial-I/O, error-copy, and
 close semantics. The `tls::testing` hooks exist only for this development stage.
 
 The fake backend does not open sockets, perform TLS, or reproduce a Firefox
 fingerprint, and must never be presented as a working request transport. The
-real pinned NSS backend is enabled only after the lifecycle, local-fixture, and
-wire-evidence gates pass.
+`nss-real` feature loads only the hash-pinned Firefox runtime from an explicit
+directory. Windows lifecycle, ALPN, certificate, deadline, and HTTPS/1.1 local
+fixture tests pass; Firefox wire matching remains a separate evidence gate.

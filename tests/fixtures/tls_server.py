@@ -3,6 +3,7 @@
 import argparse
 import socket
 import ssl
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,7 @@ class TlsFixtureServer:
     allow_non_loopback: bool = False
     timeout: float = 5.0
     max_request_bytes: int = 64 * 1024
+    stall_before_tls: float = 0.0
 
     def serve(self, count: int) -> None:
         if count < 1:
@@ -38,8 +40,16 @@ class TlsFixtureServer:
                 connection, _peer = listener.accept()
                 with connection:
                     connection.settimeout(self.timeout)
-                    with context.wrap_socket(connection, server_side=True) as tls:
-                        self._serve_http(tls)
+                    if self.stall_before_tls > 0:
+                        time.sleep(self.stall_before_tls)
+                        continue
+                    try:
+                        with context.wrap_socket(connection, server_side=True) as tls:
+                            self._serve_http(tls)
+                    except (ssl.SSLError, OSError):
+                        # Certificate-rejection tests intentionally abort the handshake;
+                        # Windows may surface the peer alert as ConnectionResetError.
+                        continue
 
     def _serve_http(self, connection: ssl.SSLSocket) -> None:
         request = bytearray()
@@ -66,6 +76,7 @@ def main(argv=None) -> int:
     parser.add_argument("--private-key", type=Path, required=True)
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--stall-before-tls", type=float, default=0.0)
     parser.add_argument("--allow-non-loopback", action="store_true")
     args = parser.parse_args(argv)
     TlsFixtureServer(
@@ -75,6 +86,7 @@ def main(argv=None) -> int:
         private_key=args.private_key,
         allow_non_loopback=args.allow_non_loopback,
         timeout=args.timeout,
+        stall_before_tls=args.stall_before_tls,
     ).serve(args.count)
     return 0
 

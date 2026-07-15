@@ -44,6 +44,9 @@ typedef struct foxreq_nss_runtime_options {
   uint32_t struct_size;
   uint32_t abi_version;
   uint64_t reserved;
+  foxreq_nss_slice runtime_dir;
+  foxreq_nss_slice trust_anchor_der;
+  uint64_t reserved2[2];
 } foxreq_nss_runtime_options;
 
 typedef struct foxreq_nss_session_cache_options {
@@ -94,6 +97,9 @@ foxreq_nss_result
 foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
                           foxreq_nss_runtime **out_runtime);
 void foxreq_nss_runtime_free(foxreq_nss_runtime *runtime);
+foxreq_nss_result foxreq_nss_runtime_versions(
+    foxreq_nss_runtime *runtime, foxreq_nss_buffer **out_nss_version,
+    foxreq_nss_buffer **out_nspr_version);
 
 foxreq_nss_result foxreq_nss_session_cache_create(
     foxreq_nss_runtime *runtime,
@@ -105,6 +111,8 @@ foxreq_nss_result
 foxreq_nss_connect(foxreq_nss_runtime *runtime,
                    const foxreq_nss_connect_options *options,
                    foxreq_nss_connection **out_connection);
+/* A failed connect may return a diagnostic connection. The caller must free
+ * every non-NULL connection regardless of the result code. */
 void foxreq_nss_connection_free(foxreq_nss_connection *connection);
 
 foxreq_nss_result foxreq_nss_connection_negotiated_alpn(

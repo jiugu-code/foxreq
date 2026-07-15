@@ -14,8 +14,11 @@ pub(super) const RESULT_STATE: u32 = 3;
 pub(super) const RESULT_BUFFER_TOO_SMALL: u32 = 9;
 pub(super) const RESULT_END_OF_STREAM: u32 = 10;
 
+#[cfg(not(feature = "nss-real"))]
 const STUB_OPERATION_READ: u32 = 1;
+#[cfg(not(feature = "nss-real"))]
 const STUB_OPERATION_WRITE: u32 = 2;
+#[cfg(not(feature = "nss-real"))]
 const STUB_OPERATION_CLOSE: u32 = 3;
 
 #[repr(C)]
@@ -49,6 +52,9 @@ struct RawRuntimeOptions {
     struct_size: u32,
     abi_version: u32,
     reserved: u64,
+    runtime_dir: RawSlice,
+    trust_anchor_der: RawSlice,
+    reserved2: [u64; 2],
 }
 
 #[repr(C)]
@@ -108,6 +114,12 @@ unsafe extern "C" {
     ) -> u32;
     #[link_name = "foxreq_nss_runtime_free"]
     fn raw_runtime_free(runtime: *mut RawRuntime);
+    #[link_name = "foxreq_nss_runtime_versions"]
+    fn raw_runtime_versions(
+        runtime: *mut RawRuntime,
+        out_nss_version: *mut *mut RawBuffer,
+        out_nspr_version: *mut *mut RawBuffer,
+    ) -> u32;
     #[link_name = "foxreq_nss_session_cache_create"]
     fn raw_session_cache_create(
         runtime: *mut RawRuntime,
@@ -165,14 +177,17 @@ unsafe extern "C" {
     ) -> u32;
     #[link_name = "foxreq_nss_buffer_free"]
     fn raw_buffer_free(buffer: *mut RawBuffer);
+    #[cfg(not(feature = "nss-real"))]
     #[link_name = "foxreq_nss_stub_set_read_data"]
     fn raw_stub_set_read_data(connection: *mut RawConnection, data: *const u8, length: u64) -> u32;
+    #[cfg(not(feature = "nss-real"))]
     #[link_name = "foxreq_nss_stub_set_io_limits"]
     fn raw_stub_set_io_limits(
         connection: *mut RawConnection,
         read_limit: u64,
         write_limit: u64,
     ) -> u32;
+    #[cfg(not(feature = "nss-real"))]
     #[link_name = "foxreq_nss_stub_fail_next"]
     fn raw_stub_fail_next(
         connection: *mut RawConnection,
@@ -183,13 +198,16 @@ unsafe extern "C" {
         message: *const u8,
         message_length: u64,
     ) -> u32;
+    #[cfg(not(feature = "nss-real"))]
     #[link_name = "foxreq_nss_stub_written_data"]
     fn raw_stub_written_data(
         connection: *mut RawConnection,
         out_buffer: *mut *mut RawBuffer,
     ) -> u32;
+    #[cfg(not(feature = "nss-real"))]
     #[link_name = "foxreq_nss_stub_close_calls"]
     fn raw_stub_close_calls(connection: *mut RawConnection, out_calls: *mut u32) -> u32;
+    #[cfg(not(feature = "nss-real"))]
     #[link_name = "foxreq_nss_stub_live_counts"]
     fn raw_stub_live_counts(
         out_runtimes: *mut u32,
@@ -229,6 +247,12 @@ pub(super) struct LastError {
     pub message: Vec<u8>,
 }
 
+pub(super) struct ConnectFailure {
+    pub code: u32,
+    pub detail: Option<LastError>,
+}
+
+#[cfg(not(feature = "nss-real"))]
 pub(super) struct LiveCounts {
     pub runtimes: u32,
     pub connections: u32,
@@ -244,7 +268,10 @@ impl Drop for BufferGuard {
     }
 }
 
-pub(super) fn runtime_create() -> Result<NonNull<RawRuntime>, u32> {
+pub(super) fn runtime_create(
+    runtime_dir: &[u8],
+    trust_anchor_der: &[u8],
+) -> Result<NonNull<RawRuntime>, u32> {
     if unsafe { raw_abi_version() } != ABI_VERSION {
         return Err(8);
     }
@@ -252,10 +279,37 @@ pub(super) fn runtime_create() -> Result<NonNull<RawRuntime>, u32> {
         struct_size: struct_size::<RawRuntimeOptions>(),
         abi_version: ABI_VERSION,
         reserved: 0,
+        runtime_dir: raw_slice(runtime_dir)?,
+        trust_anchor_der: raw_slice(trust_anchor_der)?,
+        reserved2: [0; 2],
     };
     let mut runtime = ptr::null_mut();
     let code = unsafe { raw_runtime_create(&options, &mut runtime) };
     pointer_result(code, runtime)
+}
+
+pub(super) fn runtime_versions(runtime: NonNull<RawRuntime>) -> Result<(Vec<u8>, Vec<u8>), u32> {
+    let mut nss = ptr::null_mut();
+    let mut nspr = ptr::null_mut();
+    let code = unsafe { raw_runtime_versions(runtime.as_ptr(), &mut nss, &mut nspr) };
+    code_result(code)?;
+    let nss = NonNull::new(nss).ok_or(RESULT_STATE)?;
+    let nspr = match NonNull::new(nspr) {
+        Some(nspr) => nspr,
+        None => {
+            unsafe { raw_buffer_free(nss.as_ptr()) };
+            return Err(RESULT_STATE);
+        }
+    };
+    let nss = match copy_buffer(nss) {
+        Ok(nss) => nss,
+        Err(code) => {
+            unsafe { raw_buffer_free(nspr.as_ptr()) };
+            return Err(code);
+        }
+    };
+    let nspr = copy_buffer(nspr)?;
+    Ok((nss, nspr))
 }
 
 pub(super) fn runtime_free(runtime: NonNull<RawRuntime>) {
@@ -284,17 +338,17 @@ pub(super) fn session_cache_free(cache: NonNull<RawSessionCache>) {
 pub(super) fn connect(
     runtime: NonNull<RawRuntime>,
     arguments: &ConnectArgs<'_>,
-) -> Result<NonNull<RawConnection>, u32> {
+) -> Result<NonNull<RawConnection>, ConnectFailure> {
     let options = RawConnectOptions {
         struct_size: struct_size::<RawConnectOptions>(),
         abi_version: ABI_VERSION,
-        host: raw_slice(arguments.host)?,
+        host: raw_slice(arguments.host).map_err(connect_failure)?,
         port: arguments.port,
         reserved16: 0,
         verification_mode: arguments.verification_mode,
         timeout_millis: arguments.timeout_millis,
-        profile_id: raw_slice(arguments.profile_id)?,
-        alpn_wire: raw_slice(arguments.alpn_wire)?,
+        profile_id: raw_slice(arguments.profile_id).map_err(connect_failure)?,
+        alpn_wire: raw_slice(arguments.alpn_wire).map_err(connect_failure)?,
         session_cache: arguments
             .session_cache
             .map_or(ptr::null_mut(), NonNull::as_ptr),
@@ -302,7 +356,15 @@ pub(super) fn connect(
     };
     let mut connection = ptr::null_mut();
     let code = unsafe { raw_connect(runtime.as_ptr(), &options, &mut connection) };
-    pointer_result(code, connection)
+    if code == RESULT_OK {
+        return NonNull::new(connection).ok_or_else(|| connect_failure(RESULT_STATE));
+    }
+    let detail = NonNull::new(connection).and_then(|connection| {
+        let detail = last_error(connection).ok();
+        unsafe { raw_connection_free(connection.as_ptr()) };
+        detail
+    });
+    Err(ConnectFailure { code, detail })
 }
 
 pub(super) fn connection_free(connection: NonNull<RawConnection>) {
@@ -441,6 +503,7 @@ pub(super) fn last_error(connection: NonNull<RawConnection>) -> Result<LastError
     })
 }
 
+#[cfg(not(feature = "nss-real"))]
 pub(super) fn stub_set_read_data(connection: NonNull<RawConnection>, data: &[u8]) -> u32 {
     let Ok(length) = length_u64(data.len()) else {
         return RESULT_INVALID_ARGUMENT;
@@ -453,6 +516,7 @@ pub(super) fn stub_set_read_data(connection: NonNull<RawConnection>, data: &[u8]
     unsafe { raw_stub_set_read_data(connection.as_ptr(), pointer, length) }
 }
 
+#[cfg(not(feature = "nss-real"))]
 pub(super) fn stub_set_io_limits(
     connection: NonNull<RawConnection>,
     read_limit: u64,
@@ -461,6 +525,7 @@ pub(super) fn stub_set_io_limits(
     unsafe { raw_stub_set_io_limits(connection.as_ptr(), read_limit, write_limit) }
 }
 
+#[cfg(not(feature = "nss-real"))]
 pub(super) fn stub_fail_next_read(
     connection: NonNull<RawConnection>,
     category: u32,
@@ -478,6 +543,7 @@ pub(super) fn stub_fail_next_read(
     )
 }
 
+#[cfg(not(feature = "nss-real"))]
 pub(super) fn stub_fail_next_write(
     connection: NonNull<RawConnection>,
     category: u32,
@@ -495,6 +561,7 @@ pub(super) fn stub_fail_next_write(
     )
 }
 
+#[cfg(not(feature = "nss-real"))]
 pub(super) fn stub_fail_next_close(
     connection: NonNull<RawConnection>,
     category: u32,
@@ -512,6 +579,7 @@ pub(super) fn stub_fail_next_close(
     )
 }
 
+#[cfg(not(feature = "nss-real"))]
 fn stub_fail_next(
     connection: NonNull<RawConnection>,
     operation: u32,
@@ -541,6 +609,7 @@ fn stub_fail_next(
     }
 }
 
+#[cfg(not(feature = "nss-real"))]
 pub(super) fn stub_written_data(connection: NonNull<RawConnection>) -> Result<Vec<u8>, u32> {
     let mut buffer = ptr::null_mut();
     let code = unsafe { raw_stub_written_data(connection.as_ptr(), &mut buffer) };
@@ -548,6 +617,7 @@ pub(super) fn stub_written_data(connection: NonNull<RawConnection>) -> Result<Ve
     copy_buffer(buffer)
 }
 
+#[cfg(not(feature = "nss-real"))]
 pub(super) fn stub_close_calls(connection: NonNull<RawConnection>) -> Result<u32, u32> {
     let mut calls = 0u32;
     let code = unsafe { raw_stub_close_calls(connection.as_ptr(), &mut calls) };
@@ -555,6 +625,7 @@ pub(super) fn stub_close_calls(connection: NonNull<RawConnection>) -> Result<u32
     Ok(calls)
 }
 
+#[cfg(not(feature = "nss-real"))]
 pub(super) fn stub_live_counts() -> Result<LiveCounts, u32> {
     let mut runtimes = 0u32;
     let mut connections = 0u32;
@@ -603,6 +674,10 @@ fn empty_error_info() -> RawErrorInfo {
         nspr_code: 0,
         auxiliary: 0,
     }
+}
+
+fn connect_failure(code: u32) -> ConnectFailure {
+    ConnectFailure { code, detail: None }
 }
 
 fn raw_slice(value: &[u8]) -> Result<RawSlice, u32> {
