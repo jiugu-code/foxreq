@@ -3,6 +3,7 @@
 from .compare import PermutationPolicy, compare_evidence
 from .errors import FingerprintError, ParseError, ProfileError
 from .fingerprints import ja3, ja4
+from .h2 import CLIENT_PREFACE, decode_settings, decode_window_update, parse_client_prefix
 from .normalize import is_grease, normalize_client_hello
 from .profile import ProfileManifest, resolve_profile
 from .tls import parse_client_hello_records
@@ -20,4 +21,8 @@ __all__ = [
     "compare_evidence",
     "ja3",
     "ja4",
+    "CLIENT_PREFACE",
+    "decode_settings",
+    "decode_window_update",
+    "parse_client_prefix",
 ]

@@ -39,3 +39,22 @@ class Fingerprint:
 
     raw: str
     digest: str
+
+
+@dataclass(frozen=True)
+class H2Frame:
+    """One ordered HTTP/2 frame from a captured client prefix."""
+
+    length: int
+    type_id: int
+    flags: int
+    stream_id: int
+    payload: bytes
+
+
+@dataclass(frozen=True)
+class Setting:
+    """One HTTP/2 SETTINGS identifier and value in wire order."""
+
+    identifier: int
+    value: int
