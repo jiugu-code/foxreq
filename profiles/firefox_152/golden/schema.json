@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foxreq.invalid/schemas/firefox-tls-golden-v1.json",
+  "title": "foxreq normalized Firefox TLS evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile",
+    "sample_count",
+    "labels",
+    "raw_capture_sha256",
+    "normalized_sha256",
+    "extension_order",
+    "stable_evidence",
+    "length_distributions",
+    "fingerprints"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "firefox_version",
+        "nss_revision",
+        "nspr_revision",
+        "capture_count",
+        "extension_permutation"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "firefox_version": {"type": "string", "minLength": 1},
+        "nss_revision": {"type": "string", "minLength": 1},
+        "nspr_revision": {"type": "string", "minLength": 1},
+        "capture_count": {"type": "integer", "minimum": 1},
+        "extension_permutation": {"enum": ["stable", "nss"]}
+      }
+    },
+    "sample_count": {"type": "integer", "minimum": 1},
+    "labels": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 1}
+    },
+    "raw_capture_sha256": {"$ref": "#/$defs/hashList"},
+    "normalized_sha256": {"$ref": "#/$defs/hashList"},
+    "extension_order": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "extension_count",
+        "extension_types",
+        "fixed_positions",
+        "movable_types",
+        "orders"
+      ],
+      "properties": {
+        "extension_count": {"type": "integer", "minimum": 0},
+        "extension_types": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "fixed_positions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "type"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "type": {"$ref": "#/$defs/identifier"}
+            }
+          }
+        },
+        "movable_types": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["types", "count"],
+            "properties": {
+              "types": {"type": "array", "items": {"$ref": "#/$defs/identifier"}},
+              "count": {"type": "integer", "minimum": 1}
+            }
+          }
+        }
+      }
+    },
+    "stable_evidence": {"type": "object"},
+    "length_distributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_bytes",
+        "session_id_bytes",
+        "cipher_suite_count",
+        "extension_count",
+        "extension_payload_bytes"
+      ],
+      "properties": {
+        "record_bytes": {"$ref": "#/$defs/distribution"},
+        "session_id_bytes": {"$ref": "#/$defs/distribution"},
+        "cipher_suite_count": {"$ref": "#/$defs/distribution"},
+        "extension_count": {"$ref": "#/$defs/distribution"},
+        "extension_payload_bytes": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/distribution"}
+        }
+      }
+    },
+    "fingerprints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ja3", "ja4"],
+      "properties": {
+        "ja3": {"$ref": "#/$defs/fingerprints"},
+        "ja4": {"$ref": "#/$defs/fingerprints"}
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {"oneOf": [{"type": "integer"}, {"type": "string"}]},
+    "hashList": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    },
+    "distribution": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "count"],
+        "properties": {
+          "value": {"type": "integer", "minimum": 0},
+          "count": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "fingerprints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["raw", "digest", "count"],
+        "properties": {
+          "raw": {"type": "string"},
+          "digest": {"type": "string"},
+          "count": {"type": "integer", "minimum": 1}
+        }
+      }
+    }
+  }
+}

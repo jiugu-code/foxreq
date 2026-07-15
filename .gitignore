@@ -7,6 +7,7 @@ target/
 build/
 .cache/
 dist/
+/artifacts/
 *.pcap
 *.pcapng
 *.keylog
