@@ -1,8 +1,10 @@
 #![deny(unsafe_code)]
 
+pub mod deadline;
 pub mod http1;
 #[cfg(feature = "nss")]
 pub mod tls;
+pub mod transport;
 
 const PROFILE_SCHEMA_VERSION: u32 = 1;
 
