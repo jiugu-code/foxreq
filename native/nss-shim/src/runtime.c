@@ -539,22 +539,15 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
         result = install_trust_locked(trust_bundle);
         if (result == FOXREQ_NSS_RESULT_OK) {
           global_runtime.references = UINT32_C(1);
-        } else {
-          (void)foxreq_real_api.nss_shutdown();
         }
       }
     } else if (global_runtime.directory == NULL ||
                wcscmp(global_runtime.directory, directory) != 0) {
       result = FOXREQ_NSS_RESULT_STATE;
-    } else if (foxreq_real_api.nss_no_db_init == NULL ||
-               foxreq_real_api.nss_no_db_init(NULL) != 0) {
-      result = FOXREQ_NSS_RESULT_TLS;
     } else {
       result = install_trust_locked(trust_bundle);
       if (result == FOXREQ_NSS_RESULT_OK) {
         global_runtime.references = UINT32_C(1);
-      } else {
-        (void)foxreq_real_api.nss_shutdown();
       }
     }
   } else if (global_runtime.directory == NULL ||
@@ -578,9 +571,10 @@ static void global_release(void) {
     global_runtime.references -= UINT32_C(1);
     if (global_runtime.references == UINT32_C(0)) {
       clear_trust_locked();
-      if (foxreq_real_api.nss_shutdown != NULL) {
-        (void)foxreq_real_api.nss_shutdown();
-      }
+      /* Firefox NSS cannot be reliably shut down and reinitialized after a
+       * completed TLS connection. Keep the pinned, hash-verified runtime
+       * initialized for the process lifetime while releasing all temporary
+       * trust certificates at the final active Session boundary. */
     }
   }
   ReleaseSRWLockExclusive(&global_runtime.lock);

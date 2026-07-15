@@ -287,10 +287,14 @@ fn map_deadline(error: DeadlineError) -> ClientError {
 }
 
 fn map_transport(error: TransportError) -> ClientError {
-    let kind = if error.kind() == TransportErrorKind::Timeout {
-        ClientErrorKind::Timeout
-    } else {
-        ClientErrorKind::Transport
+    let kind = match error.kind() {
+        TransportErrorKind::Io => ClientErrorKind::Connection,
+        TransportErrorKind::Timeout => ClientErrorKind::Timeout,
+        TransportErrorKind::Tls | TransportErrorKind::Unsupported => ClientErrorKind::Tls,
+        TransportErrorKind::Certificate => ClientErrorKind::Certificate,
+        TransportErrorKind::InvalidArgument | TransportErrorKind::State => {
+            ClientErrorKind::Transport
+        }
     };
     ClientError::new(kind, error.message())
 }

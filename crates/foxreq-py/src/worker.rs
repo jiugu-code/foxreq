@@ -348,6 +348,9 @@ fn map_client_error(error: ClientError) -> NativeFailure {
         | ClientErrorKind::Request => NativeFailureKind::InvalidArgument,
         ClientErrorKind::Closed => NativeFailureKind::Closed,
         ClientErrorKind::Timeout => NativeFailureKind::Timeout,
+        ClientErrorKind::Connection => NativeFailureKind::Connection,
+        ClientErrorKind::Tls => NativeFailureKind::Tls,
+        ClientErrorKind::Certificate => NativeFailureKind::Certificate,
         ClientErrorKind::Transport => NativeFailureKind::Connection,
         ClientErrorKind::Response => NativeFailureKind::Protocol,
     };

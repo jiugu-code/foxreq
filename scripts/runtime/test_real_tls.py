@@ -113,6 +113,14 @@ HTTP1_CASES = (
     ),
 )
 
+PYTHON_API_CASES = (
+    "test_chunked_response_and_timeout_mapping",
+    "test_json_post_crosses_the_native_worker",
+    "test_session_reuses_one_tls_connection",
+    "test_top_level_get_returns_the_public_response_model",
+    "test_untrusted_certificate_maps_to_certificate_error",
+)
+
 
 def _free_loopback_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -323,6 +331,30 @@ def _run_http1_case(
                 server.wait()
 
 
+def _run_python_api_suite(repository, runtime, python_api):
+    python_api = Path(python_api).resolve()
+    runtime = Path(runtime).resolve()
+    if not python_api.is_file():
+        raise RealTlsTestError("Python API interpreter is missing")
+    environment = os.environ.copy()
+    environment["PYTHONUTF8"] = "1"
+    environment["FOXREQ_NSS_RUNTIME_DIR"] = str(runtime)
+    environment["FOXREQ_PY_TEST_FIXTURE"] = str(_fixture(repository, "valid"))
+    command = [
+        str(python_api),
+        "-W",
+        "error::ResourceWarning",
+        "-m",
+        "unittest",
+        "tests.python.test_real_api",
+        "-v",
+    ]
+    completed = subprocess.run(command, cwd=str(repository), env=environment)
+    if completed.returncode != 0:
+        raise RealTlsTestError("real Python API tests failed")
+    return list(PYTHON_API_CASES)
+
+
 def run_suite(repository, runtime, cargo):
     repository = Path(repository).resolve()
     runtime = Path(runtime).resolve()
@@ -363,10 +395,15 @@ def main(argv=None):
         "--runtime", type=Path, default=Path(".cache/firefox-runtime/core")
     )
     parser.add_argument("--cargo", default=shutil.which("cargo") or "cargo")
+    parser.add_argument("--python-api", type=Path)
     args = parser.parse_args(argv)
     repository = Path(__file__).resolve().parents[2]
     try:
         tests = run_suite(repository, args.runtime, args.cargo)
+        if args.python_api is not None:
+            tests.extend(
+                _run_python_api_suite(repository, args.runtime, args.python_api)
+            )
     except RealTlsTestError as exc:
         print(json.dumps({"error": str(exc)}, sort_keys=True), file=sys.stderr)
         return 2

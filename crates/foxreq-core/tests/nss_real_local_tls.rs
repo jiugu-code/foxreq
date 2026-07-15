@@ -236,6 +236,18 @@ fn rejects_an_invalid_der_trust_anchor() {
     .err()
     .expect("invalid DER must not initialize a trusted runtime");
     assert_eq!(error.kind(), TlsErrorKind::Certificate);
+
+    let valid = std::fs::read(
+        std::env::var("FOXREQ_NSS_TEST_CA_DER")
+            .expect("FOXREQ_NSS_TEST_CA_DER must identify a valid local CA"),
+    )
+    .unwrap();
+    let recovered = Runtime::new_with_config(RuntimeConfig {
+        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        trust_anchors_der: &[&valid],
+    })
+    .expect("a failed trust install must not poison later runtimes");
+    assert_eq!(recovered.versions().unwrap().nss, "3.124");
 }
 
 #[test]

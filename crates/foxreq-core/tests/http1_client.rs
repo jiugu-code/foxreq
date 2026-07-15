@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Duration};
 
 use foxreq_core::{
     http1::{ClientErrorKind, ClientRequest, Http1Client, OwnedHeader},
-    transport::{ConnectTarget, Connector, TransportError, TransportStream},
+    transport::{ConnectTarget, Connector, TransportError, TransportErrorKind, TransportStream},
 };
 
 #[derive(Default)]
@@ -75,6 +75,50 @@ impl TransportStream for ScriptedStream {
     fn close(&mut self, _timeout: Duration) -> Result<(), TransportError> {
         self.state.borrow_mut().close_count += 1;
         Ok(())
+    }
+}
+
+struct FailingConnector(TransportErrorKind);
+
+impl Connector for FailingConnector {
+    type Stream = ScriptedStream;
+
+    fn connect(
+        &mut self,
+        _target: &ConnectTarget,
+        _timeout: Duration,
+    ) -> Result<Self::Stream, TransportError> {
+        Err(TransportError::new(self.0, "safe transport failure"))
+    }
+}
+
+#[test]
+fn preserves_transport_error_categories() {
+    let cases = [
+        (TransportErrorKind::Io, ClientErrorKind::Connection),
+        (TransportErrorKind::Timeout, ClientErrorKind::Timeout),
+        (TransportErrorKind::Tls, ClientErrorKind::Tls),
+        (TransportErrorKind::Unsupported, ClientErrorKind::Tls),
+        (
+            TransportErrorKind::Certificate,
+            ClientErrorKind::Certificate,
+        ),
+        (
+            TransportErrorKind::InvalidArgument,
+            ClientErrorKind::Transport,
+        ),
+        (TransportErrorKind::State, ClientErrorKind::Transport),
+    ];
+
+    for (transport_kind, client_kind) in cases {
+        let mut client = Http1Client::new(FailingConnector(transport_kind));
+        let error = client
+            .execute(ClientRequest::get(
+                "https://example.test/error",
+                Duration::from_secs(1),
+            ))
+            .expect_err("connector must fail");
+        assert_eq!(error.kind(), client_kind);
     }
 }
 

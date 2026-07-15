@@ -1,6 +1,7 @@
 """foxreq Python package."""
 
-from ._foxreq import NativeError, NativeResponse, NativeSession, __version__
+from ._foxreq import __version__
+from ._api import Session, get, post, request
 from ._exceptions import (
     CertificateError,
     ClosedSessionError,
@@ -25,12 +26,13 @@ __all__ = (
     "Headers",
     "InsecureRequestWarning",
     "InvalidRequestError",
-    "NativeError",
-    "NativeResponse",
-    "NativeSession",
     "ProtocolError",
     "Response",
+    "Session",
     "Timeout",
     "TlsError",
     "__version__",
+    "get",
+    "post",
+    "request",
 )
