@@ -31,3 +31,11 @@ class Difference:
     path: str
     expected: Any
     actual: Any
+
+
+@dataclass(frozen=True)
+class Fingerprint:
+    """A fingerprint's inspectable raw form and rendered digest."""
+
+    raw: str
+    digest: str
