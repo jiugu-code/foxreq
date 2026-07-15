@@ -55,6 +55,8 @@ int main(void) {
   static const uint8_t write_data[] = "abcde";
   static const uint8_t expected_alpn[] = "http/1.1";
   static const uint8_t injected_message[] = "scripted read failure";
+  static const uint8_t invalid_trust_bundle[] = {0, 0, 0, 2, 1};
+  static const uint8_t empty_trust_item[] = {0, 0, 0, 0};
 
   CHECK(foxreq_nss_abi_version() == FOXREQ_NSS_ABI_VERSION);
   CHECK(foxreq_nss_runtime_create(NULL, &runtime) ==
@@ -69,6 +71,17 @@ int main(void) {
   memset(&runtime_options, 0, sizeof(runtime_options));
   runtime_options.struct_size = (uint32_t)sizeof(runtime_options);
   runtime_options.abi_version = FOXREQ_NSS_ABI_VERSION;
+  runtime_options.trust_anchors_der.data = invalid_trust_bundle;
+  runtime_options.trust_anchors_der.length =
+      (uint64_t)sizeof(invalid_trust_bundle);
+  CHECK(foxreq_nss_runtime_create(&runtime_options, &runtime) ==
+        FOXREQ_NSS_RESULT_INVALID_ARGUMENT);
+  runtime_options.trust_anchors_der.data = empty_trust_item;
+  runtime_options.trust_anchors_der.length = (uint64_t)sizeof(empty_trust_item);
+  CHECK(foxreq_nss_runtime_create(&runtime_options, &runtime) ==
+        FOXREQ_NSS_RESULT_INVALID_ARGUMENT);
+  runtime_options.trust_anchors_der.data = NULL;
+  runtime_options.trust_anchors_der.length = UINT64_C(0);
   CHECK(foxreq_nss_runtime_create(&runtime_options, &runtime) ==
         FOXREQ_NSS_RESULT_OK);
   CHECK(runtime != NULL);

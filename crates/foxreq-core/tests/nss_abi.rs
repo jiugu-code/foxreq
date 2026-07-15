@@ -1,8 +1,10 @@
 #![cfg(all(feature = "nss", not(feature = "nss-real")))]
 
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
-use foxreq_core::tls::{testing, ConnectConfig, RequestVerification, Runtime, TlsErrorKind};
+use foxreq_core::tls::{
+    testing, ConnectConfig, RequestVerification, Runtime, RuntimeConfig, TlsErrorKind,
+};
 
 fn config<'a>() -> ConnectConfig<'a> {
     ConnectConfig {
@@ -200,4 +202,18 @@ fn injected_write_and_close_failures_are_one_shot() {
     assert_eq!(testing::close_calls(&connection).unwrap(), 1);
     connection.close(Duration::from_secs(1)).unwrap();
     assert_eq!(testing::close_calls(&connection).unwrap(), 2);
+}
+
+#[test]
+fn accepts_multiple_runtime_trust_anchors() {
+    let _guard = testing::lock();
+    let anchors: [&[u8]; 2] = [b"first DER certificate", b"second DER certificate"];
+
+    let runtime = Runtime::new_with_config(RuntimeConfig {
+        runtime_dir: Path::new("stub-runtime"),
+        trust_anchors_der: &anchors,
+    })
+    .expect("multiple trust anchors");
+
+    assert_eq!(runtime.versions().unwrap().nss, "fake-nss");
 }

@@ -16,14 +16,14 @@ typedef struct foxreq_global_runtime {
   HMODULE freebl3;
   HMODULE softokn3;
   int winsock_started;
-  uint8_t *trust_anchor;
-  size_t trust_anchor_length;
-  foxreq_cert_certificate *trust_certificate;
+  uint8_t *trust_bundle;
+  size_t trust_bundle_length;
+  foxreq_cert_certificate **trust_certificates;
+  size_t trust_certificate_count;
 } foxreq_global_runtime;
 
-static foxreq_global_runtime global_runtime = {SRWLOCK_INIT, 0U, NULL, NULL,
-                                               NULL, NULL, NULL, 0, NULL, 0U,
-                                               NULL};
+static foxreq_global_runtime global_runtime = {
+    SRWLOCK_INIT, 0U, NULL, NULL, NULL, NULL, NULL, 0, NULL, 0U, NULL, 0U};
 foxreq_nss_api foxreq_real_api = {0};
 
 static int slice_is_valid(foxreq_nss_slice slice, int allow_empty) {
@@ -34,6 +34,40 @@ static int slice_is_valid(foxreq_nss_slice slice, int allow_empty) {
     return allow_empty;
   }
   return slice.data != NULL;
+}
+
+static int trust_bundle_is_valid(foxreq_nss_slice bundle,
+                                 size_t *out_count) {
+  size_t count = 0U;
+  size_t offset = 0U;
+  size_t length;
+  if (out_count == NULL || !slice_is_valid(bundle, 1)) {
+    return 0;
+  }
+  if (bundle.length == UINT64_C(0)) {
+    *out_count = 0U;
+    return 1;
+  }
+  length = (size_t)bundle.length;
+  while (offset < length) {
+    uint32_t item_length;
+    if (length - offset < 4U) {
+      return 0;
+    }
+    item_length = ((uint32_t)bundle.data[offset] << 24U) |
+                  ((uint32_t)bundle.data[offset + 1U] << 16U) |
+                  ((uint32_t)bundle.data[offset + 2U] << 8U) |
+                  (uint32_t)bundle.data[offset + 3U];
+    offset += 4U;
+    if (item_length == UINT32_C(0) || (size_t)item_length > length - offset ||
+        count == SIZE_MAX) {
+      return 0;
+    }
+    offset += (size_t)item_length;
+    count += 1U;
+  }
+  *out_count = count;
+  return offset == length;
 }
 
 static wchar_t *utf8_directory(foxreq_nss_slice value) {
@@ -398,68 +432,102 @@ static int load_locked(wchar_t *directory) {
 }
 
 static void clear_trust_locked(void) {
-  if (global_runtime.trust_certificate != NULL &&
+  size_t index;
+  if (global_runtime.trust_certificates != NULL &&
       foxreq_real_api.cert_destroy != NULL) {
-    foxreq_real_api.cert_destroy(global_runtime.trust_certificate);
+    for (index = 0U; index < global_runtime.trust_certificate_count; index++) {
+      if (global_runtime.trust_certificates[index] != NULL) {
+        foxreq_real_api.cert_destroy(global_runtime.trust_certificates[index]);
+      }
+    }
   }
-  global_runtime.trust_certificate = NULL;
-  free(global_runtime.trust_anchor);
-  global_runtime.trust_anchor = NULL;
-  global_runtime.trust_anchor_length = 0U;
+  free(global_runtime.trust_certificates);
+  global_runtime.trust_certificates = NULL;
+  global_runtime.trust_certificate_count = 0U;
+  free(global_runtime.trust_bundle);
+  global_runtime.trust_bundle = NULL;
+  global_runtime.trust_bundle_length = 0U;
 }
 
-static foxreq_nss_result install_trust_locked(foxreq_nss_slice anchor) {
+static foxreq_nss_result install_trust_locked(foxreq_nss_slice bundle) {
   foxreq_cert_db_handle *database;
-  foxreq_cert_certificate *certificate;
+  foxreq_cert_certificate **certificates = NULL;
   foxreq_cert_trust trust;
-  foxreq_sec_item item;
-  uint8_t *copy;
-  if (anchor.length == UINT64_C(0)) {
-    return FOXREQ_NSS_RESULT_OK;
-  }
-  if (anchor.length > (uint64_t)UINT_MAX) {
+  uint8_t *copy = NULL;
+  size_t count = 0U;
+  size_t index = 0U;
+  size_t offset = 0U;
+  if (!trust_bundle_is_valid(bundle, &count)) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
-  copy = (uint8_t *)malloc((size_t)anchor.length);
-  if (copy == NULL) {
+  if (count == 0U) {
+    return FOXREQ_NSS_RESULT_OK;
+  }
+  copy = (uint8_t *)malloc((size_t)bundle.length);
+  certificates = (foxreq_cert_certificate **)calloc(count, sizeof(*certificates));
+  if (copy == NULL || certificates == NULL) {
+    free(certificates);
+    free(copy);
     return FOXREQ_NSS_RESULT_OUT_OF_MEMORY;
   }
-  memcpy(copy, anchor.data, (size_t)anchor.length);
+  memcpy(copy, bundle.data, (size_t)bundle.length);
   database = foxreq_real_api.cert_get_default_db();
   if (database == NULL) {
+    free(certificates);
     free(copy);
     return FOXREQ_NSS_RESULT_CERTIFICATE;
   }
-  item.type = 0;
-  item.data = (unsigned char *)anchor.data;
-  item.length = (unsigned int)anchor.length;
-  certificate = foxreq_real_api.cert_new_temp(database, &item, NULL, 0, 1);
-  if (certificate == NULL ||
-      foxreq_real_api.cert_decode_trust(&trust, "C,,") != 0 ||
-      foxreq_real_api.cert_change_trust(database, certificate, &trust) != 0) {
-    if (certificate != NULL) {
-      foxreq_real_api.cert_destroy(certificate);
+  if (foxreq_real_api.cert_decode_trust(&trust, "C,,") != 0) {
+    free(certificates);
+    free(copy);
+    return FOXREQ_NSS_RESULT_CERTIFICATE;
+  }
+  while (index < count) {
+    foxreq_sec_item item;
+    uint32_t item_length = ((uint32_t)bundle.data[offset] << 24U) |
+                           ((uint32_t)bundle.data[offset + 1U] << 16U) |
+                           ((uint32_t)bundle.data[offset + 2U] << 8U) |
+                           (uint32_t)bundle.data[offset + 3U];
+    offset += 4U;
+    item.type = 0;
+    item.data = (unsigned char *)(bundle.data + offset);
+    item.length = (unsigned int)item_length;
+    certificates[index] =
+        foxreq_real_api.cert_new_temp(database, &item, NULL, 0, 1);
+    if (certificates[index] == NULL ||
+        foxreq_real_api.cert_change_trust(database, certificates[index],
+                                          &trust) != 0) {
+      size_t cleanup_index;
+      for (cleanup_index = 0U; cleanup_index <= index; cleanup_index++) {
+        if (certificates[cleanup_index] != NULL) {
+          foxreq_real_api.cert_destroy(certificates[cleanup_index]);
+        }
+      }
+      free(certificates);
+      free(copy);
+      return FOXREQ_NSS_RESULT_CERTIFICATE;
     }
-    free(copy);
-    return FOXREQ_NSS_RESULT_CERTIFICATE;
+    offset += (size_t)item_length;
+    index += 1U;
   }
-  global_runtime.trust_anchor = copy;
-  global_runtime.trust_anchor_length = (size_t)anchor.length;
-  global_runtime.trust_certificate = certificate;
+  global_runtime.trust_bundle = copy;
+  global_runtime.trust_bundle_length = (size_t)bundle.length;
+  global_runtime.trust_certificates = certificates;
+  global_runtime.trust_certificate_count = count;
   return FOXREQ_NSS_RESULT_OK;
 }
 
-static int trust_matches_locked(foxreq_nss_slice anchor) {
-  if (anchor.length != (uint64_t)global_runtime.trust_anchor_length) {
+static int trust_matches_locked(foxreq_nss_slice bundle) {
+  if (bundle.length != (uint64_t)global_runtime.trust_bundle_length) {
     return 0;
   }
-  return anchor.length == UINT64_C(0) ||
-         memcmp(anchor.data, global_runtime.trust_anchor,
-                (size_t)anchor.length) == 0;
+  return bundle.length == UINT64_C(0) ||
+         memcmp(bundle.data, global_runtime.trust_bundle,
+                (size_t)bundle.length) == 0;
 }
 
 static foxreq_nss_result global_acquire(wchar_t *directory,
-                                        foxreq_nss_slice trust_anchor) {
+                                        foxreq_nss_slice trust_bundle) {
   foxreq_nss_result result = FOXREQ_NSS_RESULT_OK;
   AcquireSRWLockExclusive(&global_runtime.lock);
   if (global_runtime.references == UINT32_C(0)) {
@@ -468,7 +536,7 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
         result = FOXREQ_NSS_RESULT_TLS;
       } else {
         directory = NULL;
-        result = install_trust_locked(trust_anchor);
+        result = install_trust_locked(trust_bundle);
         if (result == FOXREQ_NSS_RESULT_OK) {
           global_runtime.references = UINT32_C(1);
         } else {
@@ -482,7 +550,7 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
                foxreq_real_api.nss_no_db_init(NULL) != 0) {
       result = FOXREQ_NSS_RESULT_TLS;
     } else {
-      result = install_trust_locked(trust_anchor);
+      result = install_trust_locked(trust_bundle);
       if (result == FOXREQ_NSS_RESULT_OK) {
         global_runtime.references = UINT32_C(1);
       } else {
@@ -492,7 +560,7 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
   } else if (global_runtime.directory == NULL ||
              wcscmp(global_runtime.directory, directory) != 0) {
     result = FOXREQ_NSS_RESULT_STATE;
-  } else if (!trust_matches_locked(trust_anchor)) {
+  } else if (!trust_matches_locked(trust_bundle)) {
     result = FOXREQ_NSS_RESULT_STATE;
   } else if (global_runtime.references == UINT32_MAX) {
     result = FOXREQ_NSS_RESULT_STATE;
@@ -557,14 +625,14 @@ foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
       options->struct_size < (uint32_t)sizeof(*options) ||
       options->abi_version != FOXREQ_NSS_ABI_VERSION ||
       !slice_is_valid(options->runtime_dir, 0) ||
-      !slice_is_valid(options->trust_anchor_der, 1)) {
+      !slice_is_valid(options->trust_anchors_der, 1)) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
   directory = utf8_directory(options->runtime_dir);
   if (directory == NULL) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
-  result = global_acquire(directory, options->trust_anchor_der);
+  result = global_acquire(directory, options->trust_anchors_der);
   if (result != FOXREQ_NSS_RESULT_OK) {
     return result;
   }

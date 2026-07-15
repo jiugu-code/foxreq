@@ -7,7 +7,7 @@ use foxreq_core::tls::{Runtime, RuntimeConfig};
 fn runtime() -> Runtime {
     Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: None,
+        trust_anchors_der: &[],
     })
     .expect("the hash-verified Firefox runtime must initialize")
 }

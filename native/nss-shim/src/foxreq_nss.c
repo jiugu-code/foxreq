@@ -142,6 +142,34 @@ static int alpn_wire_is_valid(foxreq_nss_slice wire,
 
 uint32_t foxreq_nss_abi_version(void) { return FOXREQ_NSS_ABI_VERSION; }
 
+static int trust_bundle_is_valid(foxreq_nss_slice bundle) {
+  size_t offset = 0U;
+  size_t length;
+  if (bundle.length == UINT64_C(0)) {
+    return 1;
+  }
+  if (bundle.data == NULL || bundle.length > (uint64_t)SIZE_MAX) {
+    return 0;
+  }
+  length = (size_t)bundle.length;
+  while (offset < length) {
+    uint32_t item_length;
+    if (length - offset < 4U) {
+      return 0;
+    }
+    item_length = ((uint32_t)bundle.data[offset] << 24U) |
+                  ((uint32_t)bundle.data[offset + 1U] << 16U) |
+                  ((uint32_t)bundle.data[offset + 2U] << 8U) |
+                  (uint32_t)bundle.data[offset + 3U];
+    offset += 4U;
+    if (item_length == UINT32_C(0) || (size_t)item_length > length - offset) {
+      return 0;
+    }
+    offset += (size_t)item_length;
+  }
+  return offset == length;
+}
+
 foxreq_nss_result
 foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
                           foxreq_nss_runtime **out_runtime) {
@@ -152,7 +180,8 @@ foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
   *out_runtime = NULL;
   if (options == NULL ||
       options->struct_size < (uint32_t)sizeof(*options) ||
-      options->abi_version != FOXREQ_NSS_ABI_VERSION) {
+      options->abi_version != FOXREQ_NSS_ABI_VERSION ||
+      !trust_bundle_is_valid(options->trust_anchors_der)) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
   runtime = (foxreq_nss_runtime *)calloc(1U, sizeof(*runtime));

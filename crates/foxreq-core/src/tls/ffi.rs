@@ -7,7 +7,7 @@ use std::{
     slice,
 };
 
-pub(super) const ABI_VERSION: u32 = 1;
+pub(super) const ABI_VERSION: u32 = 2;
 pub(super) const RESULT_OK: u32 = 0;
 pub(super) const RESULT_INVALID_ARGUMENT: u32 = 1;
 pub(super) const RESULT_STATE: u32 = 3;
@@ -57,7 +57,7 @@ struct RawRuntimeOptions {
     abi_version: u32,
     reserved: u64,
     runtime_dir: RawSlice,
-    trust_anchor_der: RawSlice,
+    trust_anchors_der: RawSlice,
     reserved2: [u64; 2],
 }
 
@@ -282,7 +282,7 @@ impl Drop for BufferGuard {
 
 pub(super) fn runtime_create(
     runtime_dir: &[u8],
-    trust_anchor_der: &[u8],
+    trust_anchors_der: &[u8],
 ) -> Result<NonNull<RawRuntime>, u32> {
     if unsafe { raw_abi_version() } != ABI_VERSION {
         return Err(8);
@@ -292,7 +292,7 @@ pub(super) fn runtime_create(
         abi_version: ABI_VERSION,
         reserved: 0,
         runtime_dir: raw_slice(runtime_dir)?,
-        trust_anchor_der: raw_slice(trust_anchor_der)?,
+        trust_anchors_der: raw_slice(trust_anchors_der)?,
         reserved2: [0; 2],
     };
     let mut runtime = ptr::null_mut();

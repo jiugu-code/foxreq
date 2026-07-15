@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ca_der = std::fs::read(&options.ca_der)?;
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: &options.runtime,
-        trust_anchor_der: Some(&ca_der),
+        trust_anchors_der: &[&ca_der],
     })?;
     let resumed_cache = if options.mode == Mode::Resumed {
         Some(runtime.session_cache(u32::try_from(options.count)?)?)

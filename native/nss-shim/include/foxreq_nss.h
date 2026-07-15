@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define FOXREQ_NSS_ABI_VERSION UINT32_C(1)
+#define FOXREQ_NSS_ABI_VERSION UINT32_C(2)
 
 typedef uint32_t foxreq_nss_result;
 
@@ -45,7 +45,7 @@ typedef struct foxreq_nss_runtime_options {
   uint32_t abi_version;
   uint64_t reserved;
   foxreq_nss_slice runtime_dir;
-  foxreq_nss_slice trust_anchor_der;
+  foxreq_nss_slice trust_anchors_der;
   uint64_t reserved2[2];
 } foxreq_nss_runtime_options;
 

@@ -26,7 +26,7 @@ pub struct ConnectConfig<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct RuntimeConfig<'a> {
     pub runtime_dir: &'a Path,
-    pub trust_anchor_der: Option<&'a [u8]>,
+    pub trust_anchors_der: &'a [&'a [u8]],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,8 +80,8 @@ impl Runtime {
                 "runtime directory must be non-empty and contain no NUL",
             ));
         }
-        let trust_anchor_der = config.trust_anchor_der.unwrap_or_default();
-        let raw = ffi::runtime_create(runtime_dir.as_bytes(), trust_anchor_der)
+        let trust_anchors_der = encode_trust_anchors(config.trust_anchors_der)?;
+        let raw = ffi::runtime_create(runtime_dir.as_bytes(), &trust_anchors_der)
             .map_err(|code| error_from_code(code, "pinned native runtime creation failed"))?;
         let runtime = Self {
             inner: Rc::new(RuntimeInner { raw }),
@@ -308,6 +308,37 @@ fn validate_connect_config(config: &ConnectConfig<'_>) -> Result<(), TlsError> {
         ));
     }
     Ok(())
+}
+
+fn encode_trust_anchors(anchors: &[&[u8]]) -> Result<Vec<u8>, TlsError> {
+    let mut encoded = Vec::new();
+    for anchor in anchors {
+        if anchor.is_empty() {
+            return Err(TlsError::local(
+                TlsErrorKind::InvalidArgument,
+                "trust anchor must be non-empty DER",
+            ));
+        }
+        let length = u32::try_from(anchor.len()).map_err(|_| {
+            TlsError::local(
+                TlsErrorKind::InvalidArgument,
+                "trust anchor is too large for the native ABI",
+            )
+        })?;
+        encoded
+            .len()
+            .checked_add(4)
+            .and_then(|size| size.checked_add(anchor.len()))
+            .ok_or_else(|| {
+                TlsError::local(
+                    TlsErrorKind::InvalidArgument,
+                    "trust anchor bundle length overflow",
+                )
+            })?;
+        encoded.extend_from_slice(&length.to_be_bytes());
+        encoded.extend_from_slice(anchor);
+    }
+    Ok(encoded)
 }
 
 fn timeout_millis(timeout: Duration) -> Result<u64, TlsError> {

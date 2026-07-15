@@ -13,7 +13,7 @@ fn exchanges_http_11_over_the_local_tls_fixture() {
         .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: None,
+        trust_anchors_der: &[],
     })
     .unwrap();
     let mut connection = runtime
@@ -74,7 +74,7 @@ fn verifies_an_explicit_ephemeral_local_ca() {
     .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: Some(&ca_der),
+        trust_anchors_der: &[&ca_der],
     })
     .unwrap();
     let mut connection = runtime
@@ -107,7 +107,7 @@ fn rejects_an_untrusted_local_ca() {
         .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: None,
+        trust_anchors_der: &[],
     })
     .unwrap();
     let error = runtime
@@ -153,7 +153,7 @@ fn assert_trusted_fixture_is_rejected(host: &str) {
     .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: Some(&ca_der),
+        trust_anchors_der: &[&ca_der],
     })
     .unwrap();
     let error = runtime
@@ -192,17 +192,17 @@ fn isolates_active_runtime_trust_anchors() {
 
     let first_runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: Some(&first),
+        trust_anchors_der: &[&first],
     })
     .unwrap();
     let same_runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: Some(&first),
+        trust_anchors_der: &[&first],
     })
     .unwrap();
     let mixed_error = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: Some(&second),
+        trust_anchors_der: &[&second],
     })
     .err()
     .expect("an active NSS lifecycle must not mix trust anchors");
@@ -212,10 +212,18 @@ fn isolates_active_runtime_trust_anchors() {
     drop(first_runtime);
     let replacement = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: Some(&second),
+        trust_anchors_der: &[&second],
     })
     .unwrap();
     assert_eq!(replacement.versions().unwrap().nss, "3.124");
+    drop(replacement);
+
+    let combined = Runtime::new_with_config(RuntimeConfig {
+        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        trust_anchors_der: &[&first, &second],
+    })
+    .unwrap();
+    assert_eq!(combined.versions().unwrap().nss, "3.124");
 }
 
 #[test]
@@ -223,7 +231,7 @@ fn isolates_active_runtime_trust_anchors() {
 fn rejects_an_invalid_der_trust_anchor() {
     let error = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: Some(b"not a DER certificate"),
+        trust_anchors_der: &[b"not a DER certificate"],
     })
     .err()
     .expect("invalid DER must not initialize a trusted runtime");
@@ -239,7 +247,7 @@ fn times_out_a_stalled_tls_handshake() {
         .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: None,
+        trust_anchors_der: &[],
     })
     .unwrap();
     let error = runtime
@@ -269,7 +277,7 @@ fn times_out_a_stalled_tls_read() {
         .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
-        trust_anchor_der: None,
+        trust_anchors_der: &[],
     })
     .unwrap();
     let mut connection = runtime
