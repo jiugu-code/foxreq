@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod http1;
+
 const PROFILE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
