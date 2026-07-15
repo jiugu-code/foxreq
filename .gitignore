@@ -8,6 +8,7 @@ build/
 .cache/
 dist/
 /artifacts/
+/docs/superpowers/
 *.pcap
 *.pcapng
 *.keylog
