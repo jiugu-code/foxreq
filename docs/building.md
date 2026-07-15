@@ -49,7 +49,12 @@ an excuse to install unverified packages or to disable certificate checking.
 
 ## Current native boundary
 
-`FOXREQ_NSS_STUB=ON` builds only an ABI smoke library. It does not perform TLS,
-does not reproduce a Firefox fingerprint, and must never be presented as a
-working request transport. The real backend is enabled only after source
-provenance and NSS lifecycle tests are in place.
+`FOXREQ_NSS_STUB=ON` builds a deterministic fake backend for ABI and ownership
+tests. The Rust `nss` feature currently links this fake backend and exercises
+runtime, connection, session-cache, byte-buffer, partial-I/O, error-copy, and
+close semantics. The `tls::testing` hooks exist only for this development stage.
+
+The fake backend does not open sockets, perform TLS, or reproduce a Firefox
+fingerprint, and must never be presented as a working request transport. The
+real pinned NSS backend is enabled only after the lifecycle, local-fixture, and
+wire-evidence gates pass.

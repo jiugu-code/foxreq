@@ -18,3 +18,12 @@ target_include_directories(
 )
 target_compile_definitions(foxreq_nss PUBLIC FOXREQ_NSS_STUB=1)
 foxreq_apply_c_policy(foxreq_nss)
+
+include(CTest)
+
+if(BUILD_TESTING)
+  add_executable(foxreq_nss_abi_test tests/test_abi.c)
+  target_link_libraries(foxreq_nss_abi_test PRIVATE foxreq_nss)
+  foxreq_apply_c_policy(foxreq_nss_abi_test)
+  add_test(NAME foxreq_nss_abi COMMAND foxreq_nss_abi_test)
+endif()

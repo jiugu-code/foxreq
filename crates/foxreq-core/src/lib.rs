@@ -1,6 +1,8 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 pub mod http1;
+#[cfg(feature = "nss")]
+pub mod tls;
 
 const PROFILE_SCHEMA_VERSION: u32 = 1;
 

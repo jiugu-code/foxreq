@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod chunked;
 mod error;
 mod request;
