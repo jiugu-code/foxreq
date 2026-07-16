@@ -1,7 +1,5 @@
 #include "foxreq_nss_real_internal.h"
-#include "foxreq_pinned_runtime.h"
 
-#include <bcrypt.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +13,7 @@ typedef struct foxreq_global_runtime {
   HMODULE nss3;
   HMODULE freebl3;
   HMODULE softokn3;
+  const char *profile_id;
   int winsock_started;
   uint8_t *trust_bundle;
   size_t trust_bundle_length;
@@ -22,8 +21,19 @@ typedef struct foxreq_global_runtime {
   size_t trust_certificate_count;
 } foxreq_global_runtime;
 
-static foxreq_global_runtime global_runtime = {
-    SRWLOCK_INIT, 0U, NULL, NULL, NULL, NULL, NULL, 0, NULL, 0U, NULL, 0U};
+static foxreq_global_runtime global_runtime = {SRWLOCK_INIT,
+                                               0U,
+                                               NULL,
+                                               NULL,
+                                               NULL,
+                                               NULL,
+                                               NULL,
+                                               NULL,
+                                               0,
+                                               NULL,
+                                               0U,
+                                               NULL,
+                                               0U};
 foxreq_nss_api foxreq_real_api = {0};
 
 static int slice_is_valid(foxreq_nss_slice slice, int allow_empty) {
@@ -34,6 +44,39 @@ static int slice_is_valid(foxreq_nss_slice slice, int allow_empty) {
     return allow_empty;
   }
   return slice.data != NULL;
+}
+
+static int slice_equals(foxreq_nss_slice slice, const char *expected) {
+  size_t length = strlen(expected);
+  return slice.length == (uint64_t)length && slice.data != NULL &&
+         memcmp(slice.data, expected, length) == 0;
+}
+
+static const char *runtime_profile_id(foxreq_nss_slice profile) {
+  if (slice_equals(profile, "firefox_152")) {
+    return "firefox_152";
+  }
+  return NULL;
+}
+
+static uint32_t runtime_profile_value(const char *profile_id) {
+  if (profile_id != NULL && strcmp(profile_id, "firefox_152") == 0) {
+    return FOXREQ_NSS_PROFILE_152;
+  }
+  return UINT32_C(0);
+}
+
+static int profile_versions(const char *profile_id, const char **out_nss,
+                            const char **out_nspr) {
+  if (profile_id == NULL || out_nss == NULL || out_nspr == NULL) {
+    return 0;
+  }
+  if (strcmp(profile_id, "firefox_152") == 0) {
+    *out_nss = "3.124";
+    *out_nspr = "4.39";
+    return 1;
+  }
+  return 0;
 }
 
 static int trust_bundle_is_valid(foxreq_nss_slice bundle,
@@ -124,110 +167,6 @@ static wchar_t *join_path(const wchar_t *directory, const wchar_t *filename) {
   return path;
 }
 
-static int sha256_file(const wchar_t *path, char output[65]) {
-  BCRYPT_ALG_HANDLE algorithm = NULL;
-  BCRYPT_HASH_HANDLE hash = NULL;
-  HANDLE file = INVALID_HANDLE_VALUE;
-  PUCHAR object = NULL;
-  DWORD object_length = 0U;
-  DWORD hash_length = 0U;
-  DWORD property_length = 0U;
-  UCHAR digest[32];
-  UCHAR buffer[64U * 1024U];
-  DWORD read = 0U;
-  size_t index;
-  int ok = 0;
-  static const char digits[] = "0123456789abcdef";
-
-  if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, NULL,
-                                  0U) != 0) {
-    goto cleanup;
-  }
-  if (BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
-                        (PUCHAR)&object_length, sizeof(object_length),
-                        &property_length, 0U) != 0 ||
-      property_length != sizeof(object_length)) {
-    goto cleanup;
-  }
-  if (BCryptGetProperty(algorithm, BCRYPT_HASH_LENGTH, (PUCHAR)&hash_length,
-                        sizeof(hash_length), &property_length, 0U) != 0 ||
-      property_length != sizeof(hash_length) || hash_length != sizeof(digest)) {
-    goto cleanup;
-  }
-  object = (PUCHAR)HeapAlloc(GetProcessHeap(), 0U, object_length);
-  if (object == NULL) {
-    goto cleanup;
-  }
-  if (BCryptCreateHash(algorithm, &hash, object, object_length, NULL, 0U, 0U) !=
-      0) {
-    goto cleanup;
-  }
-  file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
-                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-  if (file == INVALID_HANDLE_VALUE) {
-    goto cleanup;
-  }
-  do {
-    if (!ReadFile(file, buffer, (DWORD)sizeof(buffer), &read, NULL)) {
-      goto cleanup;
-    }
-    if (read > 0U && BCryptHashData(hash, buffer, read, 0U) != 0) {
-      goto cleanup;
-    }
-  } while (read > 0U);
-  if (BCryptFinishHash(hash, digest, (ULONG)sizeof(digest), 0U) != 0) {
-    goto cleanup;
-  }
-  for (index = 0U; index < sizeof(digest); index += 1U) {
-    output[index * 2U] = digits[digest[index] >> 4U];
-    output[index * 2U + 1U] = digits[digest[index] & 0x0FU];
-  }
-  output[64] = '\0';
-  ok = 1;
-
-cleanup:
-  if (file != INVALID_HANDLE_VALUE) {
-    CloseHandle(file);
-  }
-  if (hash != NULL) {
-    BCryptDestroyHash(hash);
-  }
-  if (object != NULL) {
-    HeapFree(GetProcessHeap(), 0U, object);
-  }
-  if (algorithm != NULL) {
-    BCryptCloseAlgorithmProvider(algorithm, 0U);
-  }
-  return ok;
-}
-
-static int verify_file(const wchar_t *directory,
-                       const foxreq_pinned_file *pinned) {
-  wchar_t *path = join_path(directory, pinned->filename);
-  WIN32_FILE_ATTRIBUTE_DATA attributes;
-  ULARGE_INTEGER size;
-  char digest[65];
-  int ok = 0;
-  if (path == NULL) {
-    return 0;
-  }
-  if (!GetFileAttributesExW(path, GetFileExInfoStandard, &attributes) ||
-      (attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0U ||
-      (attributes.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
-    goto cleanup;
-  }
-  size.HighPart = attributes.nFileSizeHigh;
-  size.LowPart = attributes.nFileSizeLow;
-  if (size.QuadPart != pinned->size || !sha256_file(path, digest) ||
-      strcmp(digest, pinned->sha256) != 0) {
-    goto cleanup;
-  }
-  ok = 1;
-cleanup:
-  free(path);
-  return ok;
-}
-
 static HMODULE load_file(const wchar_t *directory, const wchar_t *filename) {
   wchar_t *path = join_path(directory, filename);
   HMODULE module = NULL;
@@ -272,17 +211,17 @@ static void unload_locked(void) {
   clear_api();
   free(global_runtime.directory);
   global_runtime.directory = NULL;
+  global_runtime.profile_id = NULL;
 }
 
-static int load_locked(wchar_t *directory) {
-  size_t index;
+static int load_locked(wchar_t *directory, const char *profile_id) {
   const char *nss_version;
   const char *nspr_version;
+  const char *expected_nss;
+  const char *expected_nspr;
   WSADATA winsock;
-  for (index = 0U; index < FOXREQ_PINNED_FILE_COUNT; index += 1U) {
-    if (!verify_file(directory, &FOXREQ_PINNED_FILES[index])) {
-      return 0;
-    }
+  if (!profile_versions(profile_id, &expected_nss, &expected_nspr)) {
+    return 0;
   }
   if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) {
     return 0;
@@ -421,13 +360,14 @@ static int load_locked(wchar_t *directory) {
   nss_version = foxreq_real_api.nss_get_version();
   nspr_version = foxreq_real_api.nspr_get_version();
   if (nss_version == NULL || nspr_version == NULL ||
-      strcmp(nss_version, FOXREQ_PINNED_NSS_VERSION) != 0 ||
-      strcmp(nspr_version, FOXREQ_PINNED_NSPR_VERSION) != 0 ||
+      strcmp(nss_version, expected_nss) != 0 ||
+      strcmp(nspr_version, expected_nspr) != 0 ||
       foxreq_real_api.nss_no_db_init(NULL) != 0) {
     unload_locked();
     return 0;
   }
   global_runtime.directory = directory;
+  global_runtime.profile_id = profile_id;
   return 1;
 }
 
@@ -527,12 +467,13 @@ static int trust_matches_locked(foxreq_nss_slice bundle) {
 }
 
 static foxreq_nss_result global_acquire(wchar_t *directory,
-                                        foxreq_nss_slice trust_bundle) {
+                                        foxreq_nss_slice trust_bundle,
+                                        const char *profile_id) {
   foxreq_nss_result result = FOXREQ_NSS_RESULT_OK;
   AcquireSRWLockExclusive(&global_runtime.lock);
   if (global_runtime.references == UINT32_C(0)) {
     if (global_runtime.nss3 == NULL) {
-      if (!load_locked(directory)) {
+      if (!load_locked(directory, profile_id)) {
         result = FOXREQ_NSS_RESULT_TLS;
       } else {
         directory = NULL;
@@ -542,6 +483,8 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
         }
       }
     } else if (global_runtime.directory == NULL ||
+               global_runtime.profile_id == NULL ||
+               strcmp(global_runtime.profile_id, profile_id) != 0 ||
                wcscmp(global_runtime.directory, directory) != 0) {
       result = FOXREQ_NSS_RESULT_STATE;
     } else {
@@ -551,6 +494,8 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
       }
     }
   } else if (global_runtime.directory == NULL ||
+             global_runtime.profile_id == NULL ||
+             strcmp(global_runtime.profile_id, profile_id) != 0 ||
              wcscmp(global_runtime.directory, directory) != 0) {
     result = FOXREQ_NSS_RESULT_STATE;
   } else if (!trust_matches_locked(trust_bundle)) {
@@ -572,7 +517,7 @@ static void global_release(void) {
     if (global_runtime.references == UINT32_C(0)) {
       clear_trust_locked();
       /* Firefox NSS cannot be reliably shut down and reinitialized after a
-       * completed TLS connection. Keep the pinned, hash-verified runtime
+       * completed TLS connection. Keep the profile-verified runtime
        * initialized for the process lifetime while releasing all temporary
        * trust certificates at the final active Session boundary. */
     }
@@ -610,6 +555,7 @@ foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
                           foxreq_nss_runtime **out_runtime) {
   foxreq_nss_runtime *runtime;
   wchar_t *directory;
+  const char *profile_id;
   foxreq_nss_result result;
   if (out_runtime == NULL) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
@@ -619,14 +565,15 @@ foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
       options->struct_size < (uint32_t)sizeof(*options) ||
       options->abi_version != FOXREQ_NSS_ABI_VERSION ||
       !slice_is_valid(options->runtime_dir, 0) ||
-      !slice_is_valid(options->trust_anchors_der, 1)) {
+      !slice_is_valid(options->trust_anchors_der, 1) ||
+      (profile_id = runtime_profile_id(options->profile_id)) == NULL) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
   directory = utf8_directory(options->runtime_dir);
   if (directory == NULL) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
-  result = global_acquire(directory, options->trust_anchors_der);
+  result = global_acquire(directory, options->trust_anchors_der, profile_id);
   if (result != FOXREQ_NSS_RESULT_OK) {
     return result;
   }
@@ -636,6 +583,7 @@ foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
     return FOXREQ_NSS_RESULT_OUT_OF_MEMORY;
   }
   runtime->magic = FOXREQ_NSS_RUNTIME_MAGIC;
+  runtime->profile = runtime_profile_value(profile_id);
   runtime->references = 1;
   *out_runtime = runtime;
   return FOXREQ_NSS_RESULT_OK;

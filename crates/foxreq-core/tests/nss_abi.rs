@@ -212,8 +212,32 @@ fn accepts_multiple_runtime_trust_anchors() {
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new("stub-runtime"),
         trust_anchors_der: &anchors,
+        profile_id: "firefox_140_esr",
     })
     .expect("multiple trust anchors");
 
     assert_eq!(runtime.versions().unwrap().nss, "fake-nss");
+}
+
+#[test]
+fn binds_each_runtime_to_one_exact_firefox_profile() {
+    let _guard = testing::lock();
+    let runtime = Runtime::new_with_config(RuntimeConfig {
+        runtime_dir: Path::new("stub-runtime"),
+        trust_anchors_der: &[],
+        profile_id: "firefox_140_esr",
+    })
+    .unwrap();
+
+    let mismatch = runtime.connect(&config(), None).unwrap_err();
+    assert_eq!(mismatch.kind(), TlsErrorKind::InvalidArgument);
+
+    let invalid = Runtime::new_with_config(RuntimeConfig {
+        runtime_dir: Path::new("stub-runtime"),
+        trust_anchors_der: &[],
+        profile_id: "firefox_unknown",
+    })
+    .err()
+    .expect("an unknown runtime profile must be rejected");
+    assert_eq!(invalid.kind(), TlsErrorKind::InvalidArgument);
 }

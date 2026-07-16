@@ -32,15 +32,8 @@ fn build_native(target: &str) {
     if real {
         assert!(
             target == "x86_64-pc-windows-msvc",
-            "the pinned real NSS backend currently supports x86_64-pc-windows-msvc only"
+            "the real NSS backend currently supports x86_64-pc-windows-msvc only"
         );
-        let runtime_dir = env::var_os("FOXREQ_NSS_RUNTIME_DIR")
-            .expect("FOXREQ_NSS_RUNTIME_DIR is required for nss-real tests");
-        let runtime_dir = runtime_dir
-            .into_string()
-            .expect("FOXREQ_NSS_RUNTIME_DIR must be valid Unicode");
-        println!("cargo:rerun-if-env-changed=FOXREQ_NSS_RUNTIME_DIR");
-        println!("cargo:rustc-env=FOXREQ_NSS_RUNTIME_DIR={runtime_dir}");
     }
 
     println!("cargo:rerun-if-changed={}", source.display());
@@ -105,7 +98,6 @@ fn build_native(target: &str) {
     );
     println!("cargo:rustc-link-lib=static=foxreq_nss");
     if real && target.contains("windows-msvc") {
-        println!("cargo:rustc-link-lib=bcrypt");
         println!("cargo:rustc-link-lib=ws2_32");
     }
 }

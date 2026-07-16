@@ -4,6 +4,17 @@ use std::{path::Path, time::Duration};
 
 use foxreq_core::tls::{ConnectConfig, RequestVerification, Runtime, RuntimeConfig, TlsErrorKind};
 
+fn runtime_dir() -> &'static Path {
+    static RUNTIME_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    RUNTIME_DIR
+        .get_or_init(|| {
+            std::env::var_os("FOXREQ_NSS_RUNTIME_DIR")
+                .expect("FOXREQ_NSS_RUNTIME_DIR must identify the test runtime")
+                .into()
+        })
+        .as_path()
+}
+
 #[test]
 #[ignore = "requires the serial loopback TLS fixture orchestrator"]
 fn exchanges_http_11_over_the_local_tls_fixture() {
@@ -12,8 +23,9 @@ fn exchanges_http_11_over_the_local_tls_fixture() {
         .parse::<u16>()
         .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[],
+        profile_id: "firefox_152",
     })
     .unwrap();
     let mut connection = runtime
@@ -73,8 +85,9 @@ fn verifies_an_explicit_ephemeral_local_ca() {
     )
     .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[&ca_der],
+        profile_id: "firefox_152",
     })
     .unwrap();
     let mut connection = runtime
@@ -106,8 +119,9 @@ fn rejects_an_untrusted_local_ca() {
         .parse::<u16>()
         .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[],
+        profile_id: "firefox_152",
     })
     .unwrap();
     let error = runtime
@@ -152,8 +166,9 @@ fn assert_trusted_fixture_is_rejected(host: &str) {
     )
     .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[&ca_der],
+        profile_id: "firefox_152",
     })
     .unwrap();
     let error = runtime
@@ -191,18 +206,21 @@ fn isolates_active_runtime_trust_anchors() {
     assert_ne!(first, second);
 
     let first_runtime = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[&first],
+        profile_id: "firefox_152",
     })
     .unwrap();
     let same_runtime = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[&first],
+        profile_id: "firefox_152",
     })
     .unwrap();
     let mixed_error = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[&second],
+        profile_id: "firefox_152",
     })
     .err()
     .expect("an active NSS lifecycle must not mix trust anchors");
@@ -211,16 +229,18 @@ fn isolates_active_runtime_trust_anchors() {
     drop(same_runtime);
     drop(first_runtime);
     let replacement = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[&second],
+        profile_id: "firefox_152",
     })
     .unwrap();
     assert_eq!(replacement.versions().unwrap().nss, "3.124");
     drop(replacement);
 
     let combined = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[&first, &second],
+        profile_id: "firefox_152",
     })
     .unwrap();
     assert_eq!(combined.versions().unwrap().nss, "3.124");
@@ -230,8 +250,9 @@ fn isolates_active_runtime_trust_anchors() {
 #[ignore = "requires the serial loopback TLS fixture orchestrator"]
 fn rejects_an_invalid_der_trust_anchor() {
     let error = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[b"not a DER certificate"],
+        profile_id: "firefox_152",
     })
     .err()
     .expect("invalid DER must not initialize a trusted runtime");
@@ -243,8 +264,9 @@ fn rejects_an_invalid_der_trust_anchor() {
     )
     .unwrap();
     let recovered = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[&valid],
+        profile_id: "firefox_152",
     })
     .expect("a failed trust install must not poison later runtimes");
     assert_eq!(recovered.versions().unwrap().nss, "3.124");
@@ -258,8 +280,9 @@ fn times_out_a_stalled_tls_handshake() {
         .parse::<u16>()
         .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[],
+        profile_id: "firefox_152",
     })
     .unwrap();
     let error = runtime
@@ -288,8 +311,9 @@ fn times_out_a_stalled_tls_read() {
         .parse::<u16>()
         .unwrap();
     let runtime = Runtime::new_with_config(RuntimeConfig {
-        runtime_dir: Path::new(env!("FOXREQ_NSS_RUNTIME_DIR")),
+        runtime_dir: runtime_dir(),
         trust_anchors_der: &[],
+        profile_id: "firefox_152",
     })
     .unwrap();
     let mut connection = runtime

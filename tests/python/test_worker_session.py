@@ -5,7 +5,7 @@ import sys
 import unittest
 from unittest import mock
 
-from foxreq import ClosedSessionError, Timeout, WorkerError
+from foxreq import ClosedSessionError, ConfigurationError, Timeout, WorkerError
 from foxreq._ipc import read_frame, write_frame
 from foxreq._worker_session import ProfileWorkerSession
 
@@ -99,6 +99,12 @@ class FakeProcess:
 
 
 class WorkerSessionTests(unittest.TestCase):
+    def setUp(self):
+        self.validate_runtime = mock.patch(
+            "foxreq._worker_session.validate_runtime"
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
     def test_child_worker_initializes_requests_and_closes_one_native_session(self):
         from foxreq import _profile_worker
 
@@ -244,6 +250,31 @@ class WorkerSessionTests(unittest.TestCase):
         self.assertEqual(close_body, b"")
         self.assertEqual(process.terminated, 0)
         self.assertEqual(process.killed, 0)
+
+    def test_runtime_is_validated_before_worker_process_starts(self):
+        self.validate_runtime.side_effect = ConfigurationError(
+            "Firefox runtime file does not match lock: nss3.dll"
+        )
+        session = ProfileWorkerSession(
+            "C:/runtime/firefox_152",
+            (),
+            "firefox_152",
+        )
+
+        with mock.patch("foxreq._worker_session.subprocess.Popen") as popen:
+            with self.assertRaisesRegex(ConfigurationError, "does not match"):
+                session.request(
+                    b"GET",
+                    "https://example.test/",
+                    (),
+                    b"",
+                    1.0,
+                )
+
+        self.validate_runtime.assert_called_once_with(
+            "firefox_152", "C:/runtime/firefox_152"
+        )
+        popen.assert_not_called()
 
     def test_linux_library_path_is_child_only(self):
         process = FakeProcess(_success_output())

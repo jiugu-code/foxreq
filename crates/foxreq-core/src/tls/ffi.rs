@@ -7,7 +7,7 @@ use std::{
     slice,
 };
 
-pub(super) const ABI_VERSION: u32 = 2;
+pub(super) const ABI_VERSION: u32 = 3;
 pub(super) const RESULT_OK: u32 = 0;
 pub(super) const RESULT_INVALID_ARGUMENT: u32 = 1;
 pub(super) const RESULT_STATE: u32 = 3;
@@ -58,7 +58,8 @@ struct RawRuntimeOptions {
     reserved: u64,
     runtime_dir: RawSlice,
     trust_anchors_der: RawSlice,
-    reserved2: [u64; 2],
+    profile_id: RawSlice,
+    reserved2: [u64; 1],
 }
 
 #[repr(C)]
@@ -283,6 +284,7 @@ impl Drop for BufferGuard {
 pub(super) fn runtime_create(
     runtime_dir: &[u8],
     trust_anchors_der: &[u8],
+    profile_id: &[u8],
 ) -> Result<NonNull<RawRuntime>, u32> {
     if unsafe { raw_abi_version() } != ABI_VERSION {
         return Err(8);
@@ -293,7 +295,8 @@ pub(super) fn runtime_create(
         reserved: 0,
         runtime_dir: raw_slice(runtime_dir)?,
         trust_anchors_der: raw_slice(trust_anchors_der)?,
-        reserved2: [0; 2],
+        profile_id: raw_slice(profile_id)?,
+        reserved2: [0; 1],
     };
     let mut runtime = ptr::null_mut();
     let code = unsafe { raw_runtime_create(&options, &mut runtime) };
@@ -742,4 +745,17 @@ fn length_u64(value: usize) -> Result<u64, u32> {
 
 fn struct_size<T>() -> u32 {
     u32::try_from(size_of::<T>()).unwrap_or(u32::MAX)
+}
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod layout_tests {
+    use std::mem::{offset_of, size_of};
+
+    use super::RawRuntimeOptions;
+
+    #[test]
+    fn runtime_profile_abi_layout_is_stable() {
+        assert_eq!(size_of::<RawRuntimeOptions>(), 72);
+        assert_eq!(offset_of!(RawRuntimeOptions, profile_id), 48);
+    }
 }

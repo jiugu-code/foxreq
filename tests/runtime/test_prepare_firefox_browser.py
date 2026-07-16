@@ -1,5 +1,7 @@
 import hashlib
+import io
 import json
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -79,6 +81,67 @@ class PrepareFirefoxBrowserTests(unittest.TestCase):
                     lock=repository / "missing.json",
                     repository=repository,
                 )
+
+    def test_extracts_linux_browser_from_schema_two_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            archive = repository / "firefox.tar.xz"
+            with tarfile.open(archive, "w:xz") as tar:
+                _tar_file(tar, "firefox/firefox", b"linux browser")
+                _tar_file(
+                    tar,
+                    "firefox/application.ini",
+                    b"[App]\nVersion=140.12.0\nBuildID=20260701000000\n",
+                )
+                _tar_file(tar, "firefox/libxul.so", b"dependency")
+            artifact = archive.read_bytes()
+            lock = repository / "runtime.lock.json"
+            lock.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "profile": "firefox_140_esr",
+                        "platform": "linux-x86_64",
+                        "source_id": "fixture",
+                        "source_url": "https://example.invalid/firefox.tar.xz",
+                        "source_size": len(artifact),
+                        "source_sha256": hashlib.sha256(artifact).hexdigest(),
+                        "source_sha512": hashlib.sha512(artifact).hexdigest(),
+                        "firefox_version": "140.12.0",
+                        "firefox_build_id": "20260701000000",
+                        "nss_version": "3.113.1",
+                        "nspr_version": "4.36.1",
+                        "files": [
+                            {
+                                "filename": "libxul.so",
+                                "size": len(b"dependency"),
+                                "sha256": hashlib.sha256(b"dependency").hexdigest(),
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = repository / ".cache" / "firefox-browser" / "linux"
+
+            evidence = prepare_browser(
+                installer=archive,
+                output=output,
+                lock=lock,
+                repository=repository,
+                profile="firefox_140_esr",
+                platform="linux-x86_64",
+            )
+
+            self.assertEqual(b"dependency", (output / "libxul.so").read_bytes())
+            self.assertEqual(str(output / "firefox"), evidence["firefox_binary"])
+            self.assertEqual("140.12.0", evidence["firefox_version"])
+
+
+def _tar_file(archive, name, content):
+    info = tarfile.TarInfo(name)
+    info.size = len(content)
+    archive.addfile(info, io.BytesIO(content))
 
 
 if __name__ == "__main__":

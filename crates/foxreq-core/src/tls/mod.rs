@@ -27,6 +27,7 @@ pub struct ConnectConfig<'a> {
 pub struct RuntimeConfig<'a> {
     pub runtime_dir: &'a Path,
     pub trust_anchors_der: &'a [&'a [u8]],
+    pub profile_id: &'a str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,7 +61,7 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new() -> Result<Self, TlsError> {
-        let raw = ffi::runtime_create(&[], &[])
+        let raw = ffi::runtime_create(&[], &[], b"firefox_152")
             .map_err(|code| error_from_code(code, "native runtime creation failed"))?;
         Ok(Self {
             inner: Rc::new(RuntimeInner { raw }),
@@ -80,9 +81,21 @@ impl Runtime {
                 "runtime directory must be non-empty and contain no NUL",
             ));
         }
+        if !matches!(config.profile_id, "firefox_140_esr" | "firefox_152")
+            || config.profile_id.as_bytes().contains(&0)
+        {
+            return Err(TlsError::local(
+                TlsErrorKind::InvalidArgument,
+                "runtime profile must be an exact supported Firefox profile",
+            ));
+        }
         let trust_anchors_der = encode_trust_anchors(config.trust_anchors_der)?;
-        let raw = ffi::runtime_create(runtime_dir.as_bytes(), &trust_anchors_der)
-            .map_err(|code| error_from_code(code, "pinned native runtime creation failed"))?;
+        let raw = ffi::runtime_create(
+            runtime_dir.as_bytes(),
+            &trust_anchors_der,
+            config.profile_id.as_bytes(),
+        )
+        .map_err(|code| error_from_code(code, "profile native runtime creation failed"))?;
         let runtime = Self {
             inner: Rc::new(RuntimeInner { raw }),
         };

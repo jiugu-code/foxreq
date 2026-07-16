@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "name": "firefox_140_esr",
+  "firefox_version": "140.12.0esr",
+  "aliases": [],
+  "release_channel": "esr",
+  "capture_count": 100,
+  "extension_permutation": "nss",
+  "runtime_identity_source": "schema-2 platform runtime lock"
+}

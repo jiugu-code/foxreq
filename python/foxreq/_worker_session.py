@@ -14,6 +14,7 @@ from ._exceptions import (
     translate_native_error,
 )
 from ._ipc import read_frame, write_frame
+from ._runtime_manifest import validate_runtime
 
 
 _MAX_METADATA = 1024 * 1024
@@ -124,6 +125,7 @@ class ProfileWorkerSession:
                 raise WorkerError("isolated Firefox profile worker exited unexpectedly")
             return self._process
 
+        validate_runtime(self._profile_id, self._runtime_dir)
         command = [sys.executable, "-I", "-m", "foxreq._profile_worker"]
         options = {
             "stdin": subprocess.PIPE,

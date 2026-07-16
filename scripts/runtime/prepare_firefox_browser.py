@@ -1,16 +1,26 @@
-"""Extract a fresh Firefox browser from the exact hash-locked Windows installer."""
+"""Prepare a fresh Firefox browser from an exact hash-locked release artifact."""
 
 import argparse
 import configparser
 import hashlib
 import json
 import os
-import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from scripts.runtime.prepare_firefox_runtime import (
+    RuntimePreparationError,
+    SUPPORTED_PLATFORMS,
+    SUPPORTED_PROFILES,
+    _extract_linux_archive,
+    _extract_windows,
+    _load_lock,
+    _verify_artifact,
+)
 
 
 class BrowserPreparationError(Exception):
@@ -25,31 +35,6 @@ def _sha256(path):
             if not chunk:
                 return digest.hexdigest()
             digest.update(chunk)
-
-
-def _load_lock(path):
-    try:
-        document = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise BrowserPreparationError("could not read Firefox runtime lock") from error
-    digest = document.get("source_sha256")
-    size = document.get("source_size")
-    if (
-        document.get("schema_version") != 1
-        or document.get("platform") != "windows-x86_64"
-        or document.get("source_id") != "firefox-windows-x86_64-en-us"
-        or not isinstance(digest, str)
-        or not re.fullmatch(r"[0-9a-f]{64}", digest)
-        or not isinstance(size, int)
-        or isinstance(size, bool)
-        or size <= 0
-        or not isinstance(document.get("firefox_version"), str)
-        or not document["firefox_version"]
-        or not isinstance(document.get("firefox_build_id"), str)
-        or not re.fullmatch(r"[0-9]{14}", document["firefox_build_id"])
-    ):
-        raise BrowserPreparationError("invalid Firefox runtime lock")
-    return document
 
 
 def _under(path, root, label):
@@ -77,23 +62,30 @@ def _application_identity(path):
         raise BrowserPreparationError("invalid extracted application.ini") from error
 
 
-def prepare_browser(installer, output, lock, repository=None, runner=None):
-    if os.name != "nt":
-        raise BrowserPreparationError("Firefox installer extraction requires Windows")
+def prepare_browser(
+    installer,
+    output,
+    lock,
+    repository=None,
+    runner=None,
+    profile=None,
+    platform=None,
+):
     repository = Path(repository or Path(__file__).parents[2]).resolve()
     cache_root = (repository / ".cache" / "firefox-browser").resolve()
     output = _under(output, cache_root, "browser output")
     if output.exists():
         raise BrowserPreparationError("browser output must not already exist")
-    document = _load_lock(lock)
-    installer = Path(installer).resolve()
-    if (
-        not installer.is_file()
-        or installer.is_symlink()
-        or installer.stat().st_size != document["source_size"]
-        or _sha256(installer) != document["source_sha256"]
-    ):
-        raise BrowserPreparationError("Firefox installer does not match the lock")
+    try:
+        document, lock_profile, lock_platform = _load_lock(
+            lock, profile=profile, platform=platform, require_files=False
+        )
+    except RuntimePreparationError as error:
+        raise BrowserPreparationError(str(error)) from error
+    selected_platform = platform or lock_platform
+    artifact = Path(installer).resolve()
+    if not _verify_artifact(artifact, document):
+        raise BrowserPreparationError("Firefox artifact does not match the lock")
 
     cache_root.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".extract-", dir=str(cache_root)))
@@ -101,21 +93,20 @@ def prepare_browser(installer, output, lock, repository=None, runner=None):
     created_output = False
     try:
         try:
-            completed = runner(
-                [str(installer), "/ExtractDir=" + str(temporary)],
-                check=False,
-                timeout=180,
-            )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise BrowserPreparationError("Firefox installer extraction failed") from error
-        if completed.returncode != 0:
-            raise BrowserPreparationError(
-                "Firefox installer extraction returned {}".format(
-                    completed.returncode
-                )
-            )
-        source = temporary / "core"
-        binary = source / "firefox.exe"
+            if selected_platform == "windows-x86_64":
+                _extract_windows(artifact, temporary, runner)
+                source = temporary / "core"
+                binary_name = "firefox.exe"
+            elif selected_platform == "linux-x86_64":
+                _extract_linux_archive(artifact, temporary)
+                source = temporary / "firefox"
+                binary_name = "firefox"
+            else:
+                raise BrowserPreparationError("unsupported browser platform")
+        except RuntimePreparationError as error:
+            raise BrowserPreparationError(str(error)) from error
+
+        binary = source / binary_name
         application = source / "application.ini"
         if not source.is_dir() or not binary.is_file() or binary.is_symlink():
             raise BrowserPreparationError("extracted Firefox browser is incomplete")
@@ -129,7 +120,9 @@ def prepare_browser(installer, output, lock, repository=None, runner=None):
             raise BrowserPreparationError("extracted Firefox identity mismatch")
         shutil.copytree(str(source), str(output))
         created_output = True
-        output_binary = output / "firefox.exe"
+        output_binary = output / binary_name
+        if selected_platform == "linux-x86_64":
+            output_binary.chmod(output_binary.stat().st_mode | stat.S_IXUSR)
         copied_version, copied_build_id = _application_identity(
             output / "application.ini"
         )
@@ -141,6 +134,9 @@ def prepare_browser(installer, output, lock, repository=None, runner=None):
             "firefox_binary_size": output_binary.stat().st_size,
             "firefox_version": version,
             "firefox_build_id": build_id,
+            "profile": profile or lock_profile,
+            "platform": selected_platform,
+            "artifact_sha256": document["source_sha256"],
             "installer_sha256": document["source_sha256"],
         }
     except Exception:
@@ -155,7 +151,9 @@ def prepare_browser(installer, output, lock, repository=None, runner=None):
 def main(argv=None):
     repository = Path(__file__).parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--installer", type=Path, required=True)
+    parser.add_argument("--artifact", "--installer", dest="artifact", type=Path, required=True)
+    parser.add_argument("--profile", choices=sorted(SUPPORTED_PROFILES))
+    parser.add_argument("--platform", choices=sorted(SUPPORTED_PLATFORMS))
     parser.add_argument(
         "--output",
         type=Path,
@@ -168,7 +166,13 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     try:
-        evidence = prepare_browser(args.installer, args.output, args.lock)
+        evidence = prepare_browser(
+            args.artifact,
+            args.output,
+            args.lock,
+            profile=args.profile,
+            platform=args.platform,
+        )
     except BrowserPreparationError as error:
         print(json.dumps({"error": str(error)}, sort_keys=True), file=sys.stderr)
         return 2

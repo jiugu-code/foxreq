@@ -25,13 +25,18 @@ impl NativeSession {
         trust_anchors_der: Vec<Vec<u8>>,
         profile_id: String,
     ) -> PyResult<Self> {
-        if profile_id != "firefox_152" {
+        if !matches!(profile_id.as_str(), "firefox_140_esr" | "firefox_152") {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "invalid TLS profile",
             ));
         }
-        let worker = WorkerHandle::spawn(PathBuf::from(runtime_dir), trust_anchors_der, 16)
-            .map_err(|failure| Python::attach(|py| into_pyerr(py, failure)))?;
+        let worker = WorkerHandle::spawn(
+            PathBuf::from(runtime_dir),
+            trust_anchors_der,
+            profile_id.clone(),
+            16,
+        )
+        .map_err(|failure| Python::attach(|py| into_pyerr(py, failure)))?;
         Ok(Self { worker, profile_id })
     }
 

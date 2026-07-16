@@ -15,8 +15,6 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/ToolchainPolicy.cmake")
 
 if(FOXREQ_NSS_REAL)
-  include("${CMAKE_CURRENT_LIST_DIR}/cmake/FindPinnedNSS.cmake")
-  foxreq_configure_pinned_nss(pinned_include_dir)
   add_library(
     foxreq_nss STATIC
     src/compression.c
@@ -26,9 +24,8 @@ if(FOXREQ_NSS_REAL)
     src/runtime.c
     src/verify.c
   )
-  target_include_directories(foxreq_nss PRIVATE "${pinned_include_dir}")
   target_compile_definitions(foxreq_nss PUBLIC FOXREQ_NSS_REAL=1)
-  target_link_libraries(foxreq_nss PRIVATE bcrypt ws2_32)
+  target_link_libraries(foxreq_nss PRIVATE ws2_32)
 else()
   add_library(foxreq_nss STATIC src/foxreq_nss.c)
   target_compile_definitions(foxreq_nss PUBLIC FOXREQ_NSS_STUB=1)

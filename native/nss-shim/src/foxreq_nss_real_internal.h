@@ -15,6 +15,8 @@
 #define FOXREQ_NSS_CONNECTION_MAGIC UINT32_C(0x4658434E)
 #define FOXREQ_NSS_BUFFER_MAGIC UINT32_C(0x46584246)
 #define FOXREQ_NSS_ERROR_MESSAGE_CAPACITY 256U
+#define FOXREQ_NSS_PROFILE_140 UINT32_C(140)
+#define FOXREQ_NSS_PROFILE_152 UINT32_C(152)
 
 typedef const char *(__cdecl *foxreq_version_fn)(void);
 typedef int(__cdecl *foxreq_nss_init_fn)(const char *config_dir);
@@ -171,6 +173,7 @@ typedef struct foxreq_nss_api {
 
 struct foxreq_nss_runtime {
   uint32_t magic;
+  uint32_t profile;
   volatile LONG references;
 };
 

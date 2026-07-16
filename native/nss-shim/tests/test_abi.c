@@ -1,5 +1,6 @@
 #include "foxreq_nss.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +12,11 @@
       return 1;                                                                \
     }                                                                          \
   } while (0)
+
+_Static_assert(sizeof(foxreq_nss_runtime_options) == 72U,
+               "runtime options ABI size changed");
+_Static_assert(offsetof(foxreq_nss_runtime_options, profile_id) == 48U,
+               "runtime profile ABI offset changed");
 
 static foxreq_nss_connect_options connect_options(void) {
   static const uint8_t host[] = "example.test";
@@ -57,6 +63,9 @@ int main(void) {
   static const uint8_t injected_message[] = "scripted read failure";
   static const uint8_t invalid_trust_bundle[] = {0, 0, 0, 2, 1};
   static const uint8_t empty_trust_item[] = {0, 0, 0, 0};
+  static const uint8_t runtime_profile[] = "firefox_152";
+  static const uint8_t other_profile[] = "firefox_140_esr";
+  static const uint8_t unknown_runtime_profile[] = "firefox_unknown";
 
   CHECK(foxreq_nss_abi_version() == FOXREQ_NSS_ABI_VERSION);
   CHECK(foxreq_nss_runtime_create(NULL, &runtime) ==
@@ -83,6 +92,15 @@ int main(void) {
   runtime_options.trust_anchors_der.data = NULL;
   runtime_options.trust_anchors_der.length = UINT64_C(0);
   CHECK(foxreq_nss_runtime_create(&runtime_options, &runtime) ==
+        FOXREQ_NSS_RESULT_INVALID_ARGUMENT);
+  runtime_options.profile_id.data = unknown_runtime_profile;
+  runtime_options.profile_id.length =
+      (uint64_t)(sizeof(unknown_runtime_profile) - 1U);
+  CHECK(foxreq_nss_runtime_create(&runtime_options, &runtime) ==
+        FOXREQ_NSS_RESULT_INVALID_ARGUMENT);
+  runtime_options.profile_id.data = runtime_profile;
+  runtime_options.profile_id.length = (uint64_t)(sizeof(runtime_profile) - 1U);
+  CHECK(foxreq_nss_runtime_create(&runtime_options, &runtime) ==
         FOXREQ_NSS_RESULT_OK);
   CHECK(runtime != NULL);
 
@@ -93,6 +111,12 @@ int main(void) {
   CHECK(foxreq_nss_session_cache_create(runtime, &cache_options, &cache) ==
         FOXREQ_NSS_RESULT_OK);
 
+  options = connect_options();
+  options.session_cache = cache;
+  options.profile_id.data = other_profile;
+  options.profile_id.length = (uint64_t)(sizeof(other_profile) - 1U);
+  CHECK(foxreq_nss_connect(runtime, &options, &connection) ==
+        FOXREQ_NSS_RESULT_INVALID_ARGUMENT);
   options = connect_options();
   options.session_cache = cache;
   CHECK(foxreq_nss_connect(runtime, &options, &connection) ==

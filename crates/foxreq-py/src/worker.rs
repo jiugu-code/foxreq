@@ -127,9 +127,12 @@ impl WorkerHandle {
     pub(crate) fn spawn(
         runtime_dir: PathBuf,
         trust_anchors_der: Vec<Vec<u8>>,
+        profile_id: String,
         cache_capacity: u32,
     ) -> Result<Self, NativeFailure> {
-        Self::spawn_with(move || NssBackend::new(runtime_dir, trust_anchors_der, cache_capacity))
+        Self::spawn_with(move || {
+            NssBackend::new(runtime_dir, trust_anchors_der, profile_id, cache_capacity)
+        })
     }
 
     fn spawn_with<F, B>(factory: F) -> Result<Self, NativeFailure>
@@ -312,12 +315,14 @@ impl NssBackend {
     fn new(
         runtime_dir: PathBuf,
         trust_anchors_der: Vec<Vec<u8>>,
+        profile_id: String,
         cache_capacity: u32,
     ) -> Result<Self, NativeFailure> {
         let anchors: Vec<&[u8]> = trust_anchors_der.iter().map(Vec::as_slice).collect();
         let runtime = Runtime::new_with_config(RuntimeConfig {
             runtime_dir: &runtime_dir,
             trust_anchors_der: &anchors,
+            profile_id: &profile_id,
         })
         .map_err(map_tls_error)?;
         let connector = NssConnector::new(runtime, cache_capacity).map_err(map_transport_error)?;

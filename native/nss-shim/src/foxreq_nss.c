@@ -36,6 +36,22 @@ static int slice_is_valid(foxreq_nss_slice slice, int allow_empty) {
   return slice.data != NULL;
 }
 
+static uint32_t runtime_profile_value(foxreq_nss_slice profile) {
+  static const uint8_t firefox_140[] = "firefox_140_esr";
+  static const uint8_t firefox_152[] = "firefox_152";
+  if (profile.length == (uint64_t)(sizeof(firefox_140) - 1U) &&
+      profile.data != NULL &&
+      memcmp(profile.data, firefox_140, sizeof(firefox_140) - 1U) == 0) {
+    return FOXREQ_NSS_PROFILE_140;
+  }
+  if (profile.length == (uint64_t)(sizeof(firefox_152) - 1U) &&
+      profile.data != NULL &&
+      memcmp(profile.data, firefox_152, sizeof(firefox_152) - 1U) == 0) {
+    return FOXREQ_NSS_PROFILE_152;
+  }
+  return UINT32_C(0);
+}
+
 static int result_is_valid(foxreq_nss_result result) {
   return result <= FOXREQ_NSS_RESULT_END_OF_STREAM;
 }
@@ -174,6 +190,7 @@ foxreq_nss_result
 foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
                           foxreq_nss_runtime **out_runtime) {
   foxreq_nss_runtime *runtime;
+  uint32_t profile;
   if (out_runtime == NULL) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
@@ -181,6 +198,7 @@ foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
   if (options == NULL ||
       options->struct_size < (uint32_t)sizeof(*options) ||
       options->abi_version != FOXREQ_NSS_ABI_VERSION ||
+      (profile = runtime_profile_value(options->profile_id)) == UINT32_C(0) ||
       !trust_bundle_is_valid(options->trust_anchors_der)) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
@@ -189,6 +207,7 @@ foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
     return FOXREQ_NSS_RESULT_OUT_OF_MEMORY;
   }
   runtime->magic = FOXREQ_NSS_RUNTIME_MAGIC;
+  runtime->profile = profile;
   live_runtimes += UINT32_C(1);
   *out_runtime = runtime;
   return FOXREQ_NSS_RESULT_OK;
@@ -284,6 +303,7 @@ foxreq_nss_connect(foxreq_nss_runtime *runtime,
       options->abi_version != FOXREQ_NSS_ABI_VERSION ||
       !slice_is_valid(options->host, 0) ||
       !slice_is_valid(options->profile_id, 0) ||
+      runtime_profile_value(options->profile_id) != runtime->profile ||
       options->port == UINT16_C(0) ||
       (options->verification_mode != FOXREQ_NSS_VERIFY_DEFAULT &&
        options->verification_mode != FOXREQ_NSS_VERIFY_INSECURE_TEST_ONLY) ||

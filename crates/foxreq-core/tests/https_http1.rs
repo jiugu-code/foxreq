@@ -16,6 +16,7 @@ fn client() -> Http1Client<NssConnector> {
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: Path::new(&runtime_dir),
         trust_anchors_der: &anchors,
+        profile_id: "firefox_152",
     })
     .expect("real NSS runtime");
     let connector = NssConnector::new(runtime, 16).expect("real NSS connector");

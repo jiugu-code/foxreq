@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: &options.runtime,
         trust_anchors_der: &[&ca_der],
+        profile_id: "firefox_152",
     })?;
     let connector = NssConnector::new(runtime, 16)?;
     let mut client = Http1Client::new(connector);

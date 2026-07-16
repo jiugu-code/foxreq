@@ -267,6 +267,7 @@ foxreq_nss_connect(foxreq_nss_runtime *runtime,
       !alpn_wire_is_valid(options->alpn_wire) ||
       (options->verification_mode != FOXREQ_NSS_VERIFY_DEFAULT &&
        options->verification_mode != FOXREQ_NSS_VERIFY_INSECURE_TEST_ONLY) ||
+      runtime->profile != FOXREQ_NSS_PROFILE_152 ||
       options->profile_id.length != sizeof(profile) - 1U ||
       memcmp(options->profile_id.data, profile, sizeof(profile) - 1U) != 0) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;

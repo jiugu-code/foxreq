@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: &options.runtime,
         trust_anchors_der: &[&ca_der],
+        profile_id: "firefox_152",
     })?;
     let resumed_cache = if options.mode == Mode::Resumed {
         Some(runtime.session_cache(u32::try_from(options.count)?)?)
