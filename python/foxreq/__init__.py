@@ -13,6 +13,7 @@ from ._exceptions import (
     ProtocolError,
     Timeout,
     TlsError,
+    WorkerError,
 )
 from ._headers import Headers
 from ._models import Response
@@ -31,6 +32,7 @@ __all__ = (
     "Session",
     "Timeout",
     "TlsError",
+    "WorkerError",
     "__version__",
     "get",
     "post",

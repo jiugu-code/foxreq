@@ -17,6 +17,7 @@ from ._normalize import (
     normalize_verify,
     resolve_runtime_dir,
 )
+from ._worker_session import ProfileWorkerSession
 
 
 def request(
@@ -180,14 +181,11 @@ class Session:
         if self._https is None:
             runtime_dir = resolve_runtime_dir(self._runtime_dir_input)
             policy = normalize_verify(self._verify_input)
-            try:
-                native = _foxreq.NativeSession(
-                    str(runtime_dir),
-                    list(policy.anchors),
-                    self._impersonate,
-                )
-            except _foxreq.NativeError as error:
-                raise translate_native_error(error) from error
+            native = ProfileWorkerSession(
+                str(runtime_dir),
+                policy.anchors,
+                self._impersonate,
+            )
             self._https = native
             self._https_policy = policy
         return self._https, self._https_policy

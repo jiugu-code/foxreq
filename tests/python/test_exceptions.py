@@ -9,6 +9,7 @@ from foxreq._exceptions import (
     ProtocolError,
     Timeout,
     TlsError,
+    WorkerError,
     translate_native_error,
 )
 
@@ -21,6 +22,10 @@ class FakeNativeError(Exception):
 
 
 class ExceptionMappingTests(unittest.TestCase):
+    def test_worker_error_is_public_and_stable(self):
+        self.assertTrue(issubclass(WorkerError, FoxreqError))
+        self.assertEqual(str(WorkerError("worker failed safely")), "worker failed safely")
+
     def test_maps_every_stable_native_kind(self):
         expected = {
             "invalid_argument": InvalidRequestError,

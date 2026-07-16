@@ -37,6 +37,10 @@ class ClosedSessionError(FoxreqError):
     """The request used a closed Session."""
 
 
+class WorkerError(FoxreqError):
+    """The isolated Firefox profile worker failed safely."""
+
+
 class InsecureRequestWarning(UserWarning):
     """TLS peer verification was explicitly disabled."""
 

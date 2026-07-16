@@ -80,7 +80,7 @@ class SessionTests(unittest.TestCase):
 
     def test_context_manager_reuses_one_native_session(self):
         with tempfile.TemporaryDirectory() as runtime, mock.patch.object(
-            api._foxreq, "NativeSession", FakeNativeSession
+            api, "ProfileWorkerSession", FakeNativeSession
         ):
             with api.Session(runtime_dir=runtime, verify=True) as session:
                 first = session.get("https://example.test/one")
@@ -95,7 +95,7 @@ class SessionTests(unittest.TestCase):
     def test_close_is_idempotent_and_later_requests_fail(self):
         with mock.patch.object(
             api._foxreq, "NativeHttpSession", FakeNativeHttpSession
-        ), mock.patch.object(api._foxreq, "NativeSession", FakeNativeSession):
+        ), mock.patch.object(api, "ProfileWorkerSession", FakeNativeSession):
             session = api.Session(verify=False)
             session.close()
             session.close()
@@ -113,7 +113,7 @@ class SessionTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
             api._foxreq, "NativeHttpSession", FakeNativeHttpSession
         ), mock.patch.object(
-            api._foxreq, "NativeSession", FakeNativeSession
+            api, "ProfileWorkerSession", FakeNativeSession
         ), mock.patch.object(
             api, "resolve_runtime_dir", side_effect=AssertionError("runtime resolved")
         ), mock.patch.object(
@@ -138,7 +138,7 @@ class SessionTests(unittest.TestCase):
     def test_mixed_session_closes_each_created_backend_once(self):
         with tempfile.TemporaryDirectory() as runtime, mock.patch.object(
             api._foxreq, "NativeHttpSession", FakeNativeHttpSession
-        ), mock.patch.object(api._foxreq, "NativeSession", FakeNativeSession):
+        ), mock.patch.object(api, "ProfileWorkerSession", FakeNativeSession):
             session = api.Session(runtime_dir=runtime, verify=False)
             session.get("http://example.test/plain")
             with self.assertWarns(InsecureRequestWarning):
@@ -153,7 +153,7 @@ class SessionTests(unittest.TestCase):
 
     def test_insecure_request_warns_and_different_ca_policy_is_rejected(self):
         with tempfile.TemporaryDirectory() as runtime, mock.patch.object(
-            api._foxreq, "NativeSession", FakeNativeSession
+            api, "ProfileWorkerSession", FakeNativeSession
         ):
             with api.Session(runtime_dir=runtime, verify=True) as session:
                 with self.assertWarns(InsecureRequestWarning):
@@ -166,7 +166,7 @@ class SessionTests(unittest.TestCase):
 
     def test_top_level_get_creates_and_closes_one_short_session(self):
         with tempfile.TemporaryDirectory() as runtime, mock.patch.object(
-            api._foxreq, "NativeSession", FakeNativeSession
+            api, "ProfileWorkerSession", FakeNativeSession
         ):
             with self.assertWarns(InsecureRequestWarning):
                 response = api.get(
