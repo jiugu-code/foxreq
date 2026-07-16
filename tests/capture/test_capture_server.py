@@ -11,6 +11,9 @@ from unittest import mock
 
 from scripts.capture.capture_firefox import (
     FirefoxCaptureError,
+    _launch,
+    _print_capture_progress,
+    _require_available_memory,
     capture_with_local_server,
     orchestrate_capture,
     render_certificate_override,
@@ -41,6 +44,67 @@ from tests.wire.helpers import synthetic_client_hello
 
 
 class CaptureServerTests(unittest.TestCase):
+    def test_memory_gate_waits_for_bounded_recovery_before_launch(self):
+        with mock.patch(
+            "scripts.capture.capture_firefox._available_physical_memory",
+            side_effect=[512, 2048],
+        ), mock.patch("scripts.capture.capture_firefox.time.sleep") as sleep:
+            available = _require_available_memory(1024, wait_timeout=1.0)
+
+        self.assertEqual(2048, available)
+        sleep.assert_called_once()
+
+    def test_capture_progress_is_one_bounded_json_event(self):
+        output = io.StringIO()
+        with mock.patch("sys.stderr", output):
+            _print_capture_progress({"mode": "cold", "completed": 1, "total": 1})
+
+        event = json.loads(output.getvalue())
+        self.assertEqual("firefox_capture_progress", event["event"])
+        self.assertEqual(1, event["completed"])
+
+    def test_headless_launch_always_requests_a_screenshot_navigation(self):
+        class Process:
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+            def wait(self, timeout):
+                self.timeout = timeout
+                return 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "firefox.exe"
+            binary.write_bytes(b"pinned firefox")
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            profile = root / "profile"
+            profile.mkdir()
+            process = Process()
+            with mock.patch(
+                "scripts.capture.capture_firefox.subprocess.Popen",
+                return_value=process,
+            ) as popen:
+                result = _launch(
+                    binary=binary,
+                    expected_sha256=digest,
+                    profile=profile,
+                    urls=["https://127.0.0.1:8443/"],
+                    timeout=2.0,
+                    sequence_start=1,
+                    expected_connections=1,
+                    capture_waiter=lambda _count, _timeout: True,
+                )
+
+            command = popen.call_args.args[0]
+            self.assertIn("--no-remote", command)
+            self.assertNotIn("--new-instance", command)
+            self.assertIn("--screenshot", command)
+            self.assertIn(str((profile / "capture.png").resolve()), command)
+            self.assertTrue(result["terminated_after_capture"])
+
     def test_peeks_a_client_hello_without_consuming_tls_bytes(self):
         wire = synthetic_client_hello(split_at=23)
         client, server = socket.socketpair()
@@ -240,6 +304,45 @@ class CaptureServerTests(unittest.TestCase):
                     )
             launch.assert_not_called()
 
+    def test_cold_capture_retries_one_failed_browser_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "firefox.exe"
+            binary.write_bytes(b"pinned firefox")
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            failed = {
+                "sequence_start": 1,
+                "expected_connections": 1,
+                "timed_out": True,
+                "terminated_after_capture": False,
+                "exit_code": 1,
+                "stderr_tail": "transient child launch failure",
+            }
+            succeeded = {
+                "sequence_start": 1,
+                "expected_connections": 1,
+                "timed_out": False,
+                "terminated_after_capture": True,
+                "exit_code": 0,
+            }
+            with mock.patch(
+                "scripts.capture.capture_firefox._launch",
+                side_effect=[failed, succeeded],
+            ) as launch:
+                manifest = orchestrate_capture(
+                    binary=binary,
+                    expected_sha256=digest,
+                    url="https://127.0.0.1:8443/",
+                    preferences={},
+                    mode="cold",
+                    count=1,
+                    timeout=2.0,
+                    launch_attempts=2,
+                )
+
+            self.assertEqual(2, launch.call_count)
+            self.assertEqual(2, len(manifest["launches"]))
+            self.assertTrue(manifest["launches"][-1]["terminated_after_capture"])
+
     def test_local_capture_orchestrator_collects_a_resumption_sequence(self):
         repository = Path(__file__).parents[2]
         fixture_root = repository / "artifacts" / "fixtures" / "certs"
@@ -312,6 +415,64 @@ class CaptureServerTests(unittest.TestCase):
             records = [json.loads(line) for line in raw_output.read_text().splitlines()]
             self.assertEqual(3, manifest["count"])
             self.assertEqual(["cold", "resumed", "resumed"], [item["label"] for item in records])
+
+    def test_local_capture_reports_server_failure_before_launch_timeout(self):
+        repository = Path(__file__).parents[2]
+        capture_root = repository / "artifacts" / "captures"
+        capture_root.mkdir(parents=True, exist_ok=True)
+
+        class FailingServer:
+            instance = None
+
+            def __init__(self, host, port, **_kwargs):
+                self.host = host
+                self.port = port
+                self.bound_port = port
+                self.ready = threading.Event()
+                self.release = threading.Event()
+                FailingServer.instance = self
+
+            def serve(self, _count):
+                self.ready.set()
+                self.release.wait(timeout=1.0)
+                raise RuntimeError("server root cause")
+
+            def wait_for_completed(self, _count, _timeout):
+                return False
+
+        def fail_launch(**_kwargs):
+            FailingServer.instance.release.set()
+            threading.Event().wait(0.02)
+            raise FirefoxCaptureError("generic launch timeout")
+
+        with tempfile.TemporaryDirectory(
+            prefix="firefox-failure-", dir=str(capture_root)
+        ) as directory, mock.patch(
+            "scripts.capture.capture_firefox.TlsCaptureServer", FailingServer
+        ), mock.patch(
+            "scripts.capture.capture_firefox.orchestrate_capture",
+            side_effect=fail_launch,
+        ):
+            output = Path(directory) / "failure.jsonl"
+            with self.assertRaisesRegex(
+                FirefoxCaptureError, "local TLS capture server failed"
+            ) as raised:
+                capture_with_local_server(
+                    binary=Path(directory) / "firefox.exe",
+                    expected_sha256="0" * 64,
+                    url="https://127.0.0.1:8443/",
+                    preferences={},
+                    mode="cold",
+                    count=1,
+                    timeout=1.0,
+                    certificate=Path(directory) / "server.pem",
+                    private_key=Path(directory) / "server.key",
+                    certificate_der=b"certificate",
+                    raw_output=output,
+                )
+
+            self.assertIsInstance(raised.exception.__cause__, RuntimeError)
+            self.assertEqual("server root cause", str(raised.exception.__cause__))
 
     def test_reassembles_records_and_arbitrary_recv_fragments(self):
         wire = synthetic_client_hello(split_at=19)

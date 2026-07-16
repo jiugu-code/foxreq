@@ -28,6 +28,21 @@ static int text_slice_is_valid(foxreq_nss_slice slice) {
          memchr(slice.data, 0, (size_t)slice.length) == NULL;
 }
 
+static int profile_matches_runtime(const foxreq_nss_runtime *runtime,
+                                   foxreq_nss_slice profile) {
+  static const uint8_t firefox_140[] = "firefox_140_esr";
+  static const uint8_t firefox_152[] = "firefox_152";
+  if (runtime == NULL || profile.data == NULL) {
+    return 0;
+  }
+  return (runtime->profile == FOXREQ_NSS_PROFILE_140 &&
+          profile.length == sizeof(firefox_140) - 1U &&
+          memcmp(profile.data, firefox_140, sizeof(firefox_140) - 1U) == 0) ||
+         (runtime->profile == FOXREQ_NSS_PROFILE_152 &&
+          profile.length == sizeof(firefox_152) - 1U &&
+          memcmp(profile.data, firefox_152, sizeof(firefox_152) - 1U) == 0);
+}
+
 static int alpn_wire_is_valid(foxreq_nss_slice wire) {
   size_t offset = 0U;
   if (!slice_is_valid(wire, 0)) {
@@ -252,7 +267,6 @@ foxreq_nss_connect(foxreq_nss_runtime *runtime,
   foxreq_pr_socket_option nonblocking_probe;
   int32_t error_code = INT32_C(0);
   foxreq_nss_result result = FOXREQ_NSS_RESULT_TLS;
-  static const uint8_t profile[] = "firefox_152";
 
   if (out_connection == NULL) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
@@ -267,9 +281,7 @@ foxreq_nss_connect(foxreq_nss_runtime *runtime,
       !alpn_wire_is_valid(options->alpn_wire) ||
       (options->verification_mode != FOXREQ_NSS_VERIFY_DEFAULT &&
        options->verification_mode != FOXREQ_NSS_VERIFY_INSECURE_TEST_ONLY) ||
-      runtime->profile != FOXREQ_NSS_PROFILE_152 ||
-      options->profile_id.length != sizeof(profile) - 1U ||
-      memcmp(options->profile_id.data, profile, sizeof(profile) - 1U) != 0) {
+      !profile_matches_runtime(runtime, options->profile_id)) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
   cache = options->session_cache;

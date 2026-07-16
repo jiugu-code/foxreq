@@ -13,9 +13,9 @@ enum Mode {
 struct Options {
     runtime: PathBuf,
     ca_der: PathBuf,
+    profile: String,
     host: String,
     port: u16,
-    mode: Mode,
     count: usize,
 }
 
@@ -25,20 +25,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let runtime = Runtime::new_with_config(RuntimeConfig {
         runtime_dir: &options.runtime,
         trust_anchors_der: &[&ca_der],
-        profile_id: "firefox_152",
+        profile_id: &options.profile,
     })?;
-    let resumed_cache = if options.mode == Mode::Resumed {
-        Some(runtime.session_cache(u32::try_from(options.count)?)?)
-    } else {
-        None
-    };
+    let cache = runtime.session_cache(u32::try_from(options.count)?)?;
     for _ in 0..options.count {
-        if options.mode == Mode::Cold {
-            let cold_cache = runtime.session_cache(1)?;
-            exchange(&runtime, Some(&cold_cache), &options)?;
-        } else {
-            exchange(&runtime, resumed_cache.as_ref(), &options)?;
-        }
+        exchange(&runtime, Some(&cache), &options)?;
     }
     println!("completed={}", options.count);
     Ok(())
@@ -55,7 +46,7 @@ fn exchange(
             host: &options.host,
             port: options.port,
             timeout: deadline,
-            profile_id: "firefox_152",
+            profile_id: &options.profile,
             // NSS places its preferred protocol last in the input vector.
             alpn_wire: b"\x08http/1.1\x02h2",
             verification: RequestVerification::Default,
@@ -100,6 +91,7 @@ fn exchange(
 fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, Box<dyn Error>> {
     let mut runtime = None;
     let mut ca_der = None;
+    let mut profile = None;
     let mut host = None;
     let mut port = None;
     let mut mode = None;
@@ -112,6 +104,7 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, Box
         match argument.as_str() {
             "--runtime" => runtime = Some(PathBuf::from(value)),
             "--ca-der" => ca_der = Some(PathBuf::from(value)),
+            "--profile" => profile = Some(value),
             "--host" => host = Some(value),
             "--port" => port = Some(value.parse::<u16>()?),
             "--mode" => {
@@ -138,12 +131,20 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, Box
     if !(1..=1000).contains(&count) {
         return Err(invalid("count must be between 1 and 1000").into());
     }
+    let mode = mode.ok_or_else(|| invalid("--mode is required"))?;
+    if mode == Mode::Cold && count != 1 {
+        return Err(invalid("cold mode requires exactly one connection per process").into());
+    }
+    let profile = profile.ok_or_else(|| invalid("--profile is required"))?;
+    if !matches!(profile.as_str(), "firefox_140_esr" | "firefox_152") {
+        return Err(invalid("profile is unsupported").into());
+    }
     Ok(Options {
         runtime: runtime.ok_or_else(|| invalid("--runtime is required"))?,
         ca_der: ca_der.ok_or_else(|| invalid("--ca-der is required"))?,
+        profile,
         host,
         port,
-        mode: mode.ok_or_else(|| invalid("--mode is required"))?,
         count,
     })
 }

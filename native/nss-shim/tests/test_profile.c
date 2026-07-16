@@ -8,7 +8,13 @@
 static const uint16_t implemented_ciphers[] = {UINT16_C(0x0001),
                                                 UINT16_C(0x0002),
                                                 UINT16_C(0x0003)};
-static const uint16_t firefox_ciphers[] = {
+static const uint16_t firefox_140_ciphers[] = {
+    UINT16_C(0x1301), UINT16_C(0x1303), UINT16_C(0x1302), UINT16_C(0xC02B),
+    UINT16_C(0xC02F), UINT16_C(0xCCA9), UINT16_C(0xCCA8), UINT16_C(0xC02C),
+    UINT16_C(0xC030), UINT16_C(0xC00A), UINT16_C(0xC009), UINT16_C(0xC013),
+    UINT16_C(0xC014), UINT16_C(0x009C), UINT16_C(0x009D), UINT16_C(0x002F),
+    UINT16_C(0x0035)};
+static const uint16_t firefox_152_ciphers[] = {
     UINT16_C(0x1301), UINT16_C(0x1303), UINT16_C(0x1302), UINT16_C(0xC02B),
     UINT16_C(0xC02F), UINT16_C(0xCCA9), UINT16_C(0xCCA8), UINT16_C(0xC02C),
     UINT16_C(0xC030), UINT16_C(0xC00A), UINT16_C(0xC013), UINT16_C(0xC014),
@@ -33,6 +39,21 @@ static int grease_ech_enabled;
 static uint16_t certificate_compression_ids[3];
 static size_t certificate_compression_count;
 static int option_values[64];
+
+static void reset_observed(void) {
+  disabled_cipher_count = 0U;
+  enabled_cipher_count = 0U;
+  signature_scheme_count = 0U;
+  named_group_count = 0U;
+  additional_key_shares = 0U;
+  grease_ech_enabled = 0;
+  certificate_compression_count = 0U;
+  memset(enabled_ciphers, 0, sizeof(enabled_ciphers));
+  memset(signature_schemes, 0, sizeof(signature_schemes));
+  memset(named_groups, 0, sizeof(named_groups));
+  memset(certificate_compression_ids, 0, sizeof(certificate_compression_ids));
+  memset(option_values, 0, sizeof(option_values));
+}
 
 static const uint16_t *__cdecl mock_get_implemented_ciphers(void) {
   return implemented_ciphers;
@@ -136,35 +157,17 @@ static int __cdecl mock_set_next_proto(foxreq_pr_file_desc *fd,
   return 0;
 }
 
-int main(void) {
-  static const uint8_t alpn[] = {UINT8_C(8), 'h', 't', 't', 'p', '/', '1', '.',
-                                 '1'};
-  foxreq_nss_connection connection = {0};
-  foxreq_nss_connect_options options = {0};
-
-  connection.fd = (foxreq_pr_file_desc *)(uintptr_t)1U;
-  options.alpn_wire.data = alpn;
-  options.alpn_wire.length = sizeof(alpn);
-
-  foxreq_real_api.ssl_get_implemented_ciphers = mock_get_implemented_ciphers;
-  foxreq_real_api.ssl_get_num_implemented_ciphers =
-      mock_get_num_implemented_ciphers;
-  foxreq_real_api.ssl_cipher_pref_set = mock_cipher_pref_set;
-  foxreq_real_api.ssl_signature_scheme_pref_set =
-      mock_signature_scheme_pref_set;
-  foxreq_real_api.ssl_named_group_config = mock_named_group_config;
-  foxreq_real_api.ssl_send_additional_key_shares =
-      mock_send_additional_key_shares;
-  foxreq_real_api.ssl_get_experimental_api = mock_get_experimental_api;
-  foxreq_real_api.ssl_option_set = mock_option_set;
-  foxreq_real_api.ssl_version_range_set = mock_version_range_set;
-  foxreq_real_api.ssl_set_next_proto = mock_set_next_proto;
-
-  assert(foxreq_real_configure_profile(&connection, &options) ==
+static void assert_firefox_profile(foxreq_nss_connection *connection,
+                                   foxreq_nss_connect_options *options,
+                                   const uint16_t *expected_ciphers,
+                                   size_t expected_cipher_count) {
+  reset_observed();
+  assert(foxreq_real_configure_profile(connection, options) ==
          FOXREQ_NSS_RESULT_OK);
   assert(disabled_cipher_count == ARRAY_LENGTH(implemented_ciphers));
-  assert(enabled_cipher_count == ARRAY_LENGTH(firefox_ciphers));
-  assert(memcmp(enabled_ciphers, firefox_ciphers, sizeof(firefox_ciphers)) == 0);
+  assert(enabled_cipher_count == expected_cipher_count);
+  assert(memcmp(enabled_ciphers, expected_ciphers,
+                expected_cipher_count * sizeof(*expected_ciphers)) == 0);
   assert(signature_scheme_count == ARRAY_LENGTH(firefox_signature_schemes));
   assert(memcmp(signature_schemes, firefox_signature_schemes,
                 sizeof(firefox_signature_schemes)) == 0);
@@ -186,5 +189,49 @@ int main(void) {
   assert(option_values[35] == 1);
   assert(option_values[40] == 1);
   assert(option_values[43] == 0);
+}
+
+int main(void) {
+  static const uint8_t alpn[] = {UINT8_C(8), 'h', 't', 't', 'p', '/', '1', '.',
+                                 '1'};
+  static const uint8_t firefox_140[] = "firefox_140_esr";
+  static const uint8_t firefox_152[] = "firefox_152";
+  static const uint8_t unknown[] = "firefox_unknown";
+  foxreq_nss_connection connection = {0};
+  foxreq_nss_connect_options options = {0};
+
+  connection.fd = (foxreq_pr_file_desc *)(uintptr_t)1U;
+  options.alpn_wire.data = alpn;
+  options.alpn_wire.length = sizeof(alpn);
+
+  foxreq_real_api.ssl_get_implemented_ciphers = mock_get_implemented_ciphers;
+  foxreq_real_api.ssl_get_num_implemented_ciphers =
+      mock_get_num_implemented_ciphers;
+  foxreq_real_api.ssl_cipher_pref_set = mock_cipher_pref_set;
+  foxreq_real_api.ssl_signature_scheme_pref_set =
+      mock_signature_scheme_pref_set;
+  foxreq_real_api.ssl_named_group_config = mock_named_group_config;
+  foxreq_real_api.ssl_send_additional_key_shares =
+      mock_send_additional_key_shares;
+  foxreq_real_api.ssl_get_experimental_api = mock_get_experimental_api;
+  foxreq_real_api.ssl_option_set = mock_option_set;
+  foxreq_real_api.ssl_version_range_set = mock_version_range_set;
+  foxreq_real_api.ssl_set_next_proto = mock_set_next_proto;
+
+  options.profile_id.data = firefox_152;
+  options.profile_id.length = sizeof(firefox_152) - 1U;
+  assert_firefox_profile(&connection, &options, firefox_152_ciphers,
+                         ARRAY_LENGTH(firefox_152_ciphers));
+
+  options.profile_id.data = firefox_140;
+  options.profile_id.length = sizeof(firefox_140) - 1U;
+  assert_firefox_profile(&connection, &options, firefox_140_ciphers,
+                         ARRAY_LENGTH(firefox_140_ciphers));
+
+  options.profile_id.data = unknown;
+  options.profile_id.length = sizeof(unknown) - 1U;
+  reset_observed();
+  assert(foxreq_real_configure_profile(&connection, &options) ==
+         FOXREQ_NSS_RESULT_INVALID_ARGUMENT);
   return 0;
 }

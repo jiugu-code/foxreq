@@ -6,11 +6,16 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Dict, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
@@ -25,6 +30,27 @@ _PREFERENCE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 class FirefoxCaptureError(Exception):
     pass
+
+
+@contextmanager
+def temporary_firefox_profile():
+    """Yield a profile and tolerate short-lived Firefox child-process locks."""
+
+    directory = Path(tempfile.mkdtemp(prefix="foxreq-firefox-cold-"))
+    try:
+        yield directory
+    finally:
+        for attempt in range(50):
+            try:
+                shutil.rmtree(directory)
+                break
+            except FileNotFoundError:
+                break
+            except PermissionError:
+                if attempt == 49:
+                    shutil.rmtree(directory, ignore_errors=True)
+                    break
+                time.sleep(0.1)
 
 
 def render_certificate_override(host: str, port: int, certificate_der: bytes) -> str:
@@ -138,6 +164,8 @@ def orchestrate_capture(
     timeout: float,
     certificate_der: Optional[bytes] = None,
     minimum_available_memory: int = 0,
+    memory_wait_timeout: float = 0.0,
+    launch_attempts: int = 1,
     progress: Optional[Callable[[Mapping[str, object]], None]] = None,
     capture_waiter: Optional[Callable[[int, float], bool]] = None,
 ) -> Dict[str, object]:
@@ -153,6 +181,19 @@ def orchestrate_capture(
         or minimum_available_memory < 0
     ):
         raise FirefoxCaptureError("minimum available memory must be non-negative")
+    if (
+        isinstance(memory_wait_timeout, bool)
+        or not isinstance(memory_wait_timeout, (int, float))
+        or not math.isfinite(memory_wait_timeout)
+        or memory_wait_timeout < 0
+    ):
+        raise FirefoxCaptureError("memory wait timeout must be non-negative")
+    if (
+        isinstance(launch_attempts, bool)
+        or not isinstance(launch_attempts, int)
+        or not 1 <= launch_attempts <= 3
+    ):
+        raise FirefoxCaptureError("launch attempts must be between one and three")
     digest = verify_firefox_binary(binary, expected_sha256)
     url = validate_capture_url(url)
     user_js = render_user_js(preferences)
@@ -161,40 +202,52 @@ def orchestrate_capture(
 
     if mode == "cold":
         for sequence in range(1, count + 1):
-            with tempfile.TemporaryDirectory(prefix="foxreq-firefox-cold-") as directory:
-                profile = Path(directory)
-                _write_capture_profile(profile, user_js, url, certificate_der)
-                memory_before = _require_available_memory(minimum_available_memory)
-                launch = _launch(
-                    binary,
-                    expected_sha256,
-                    profile,
-                    [url],
-                    timeout,
-                    sequence,
-                    1,
-                    capture_waiter,
-                )
-                _require_launch_success(launch)
-                launch["available_memory_before_bytes"] = memory_before
-                launch["available_memory_after_bytes"] = _available_physical_memory()
-                launches.append(launch)
-                if progress is not None:
-                    progress(
-                        {
-                            "mode": mode,
-                            "completed": sequence,
-                            "total": count,
-                            "available_memory_bytes": launch[
-                                "available_memory_after_bytes"
-                            ],
-                        }
+            for attempt in range(1, launch_attempts + 1):
+                with temporary_firefox_profile() as profile:
+                    _write_capture_profile(profile, user_js, url, certificate_der)
+                    memory_before = _require_available_memory(
+                        minimum_available_memory, memory_wait_timeout
                     )
+                    launch = _launch(
+                        binary,
+                        expected_sha256,
+                        profile,
+                        [url],
+                        timeout,
+                        sequence,
+                        1,
+                        capture_waiter,
+                    )
+                    launch["attempt"] = attempt
+                    launch["available_memory_before_bytes"] = memory_before
+                    launch["available_memory_after_bytes"] = (
+                        _available_physical_memory()
+                    )
+                    launches.append(launch)
+                    try:
+                        _require_launch_success(launch)
+                    except FirefoxCaptureError:
+                        if attempt == launch_attempts:
+                            raise
+                        continue
+                    if progress is not None:
+                        progress(
+                            {
+                                "mode": mode,
+                                "completed": sequence,
+                                "total": count,
+                                "available_memory_bytes": launch[
+                                    "available_memory_after_bytes"
+                                ],
+                            }
+                        )
+                    break
     else:
-        with tempfile.TemporaryDirectory(prefix="foxreq-firefox-resumed-") as directory:
-            profile = Path(directory)
+        with temporary_firefox_profile() as profile:
             _write_capture_profile(profile, user_js, url, certificate_der)
-            memory_before = _require_available_memory(minimum_available_memory)
+            memory_before = _require_available_memory(
+                minimum_available_memory, memory_wait_timeout
+            )
             launch = _launch(
                 binary,
                 expected_sha256,
@@ -229,6 +282,8 @@ def orchestrate_capture(
         "firefox_binary_sha256": digest,
         "preferences_sha256": preferences_hash,
         "minimum_available_memory_bytes": minimum_available_memory,
+        "memory_wait_timeout_seconds": memory_wait_timeout,
+        "launch_attempt_limit": launch_attempts,
         "launches": launches,
     }
 
@@ -257,7 +312,11 @@ def _require_launch_success(launch: Mapping[str, object]) -> None:
     if launch.get("timed_out") is not False or (
         not captured and launch.get("exit_code") != 0
     ):
-        raise FirefoxCaptureError("Firefox capture launch did not complete cleanly")
+        detail = launch.get("stderr_tail")
+        suffix = ": " + detail if isinstance(detail, str) and detail else ""
+        raise FirefoxCaptureError(
+            "Firefox capture launch did not complete cleanly" + suffix
+        )
 
 
 def _available_physical_memory() -> Optional[int]:
@@ -284,11 +343,20 @@ def _available_physical_memory() -> Optional[int]:
     return int(status.available_physical)
 
 
-def _require_available_memory(minimum: int) -> Optional[int]:
-    available = _available_physical_memory()
-    if available is not None and available < minimum:
-        raise FirefoxCaptureError("available physical memory is below the capture limit")
-    return available
+def _require_available_memory(
+    minimum: int, wait_timeout: float = 0.0
+) -> Optional[int]:
+    deadline = time.monotonic() + wait_timeout
+    while True:
+        available = _available_physical_memory()
+        if available is None or available >= minimum:
+            return available
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise FirefoxCaptureError(
+                "available physical memory is below the capture limit"
+            )
+        time.sleep(min(1.0, remaining))
 
 
 def capture_with_local_server(
@@ -304,6 +372,8 @@ def capture_with_local_server(
     certificate_der: bytes,
     raw_output: Path,
     minimum_available_memory: int = 0,
+    memory_wait_timeout: float = 0.0,
+    launch_attempts: int = 1,
     progress: Optional[Callable[[Mapping[str, object]], None]] = None,
 ) -> Dict[str, object]:
     """Run one bounded loopback capture suite with an in-process TLS fixture."""
@@ -326,6 +396,7 @@ def capture_with_local_server(
             output=output,
             mode=mode,
             timeout=timeout,
+            accept_timeout=(timeout + memory_wait_timeout) * launch_attempts + 1.0,
         )
 
         def serve():
@@ -359,18 +430,26 @@ def capture_with_local_server(
                 timeout=timeout,
                 certificate_der=certificate_der,
                 minimum_available_memory=minimum_available_memory,
+                memory_wait_timeout=memory_wait_timeout,
+                launch_attempts=launch_attempts,
                 progress=progress,
                 capture_waiter=server.wait_for_completed,
             )
         except Exception as error:
             capture_error = error
+            request_stop = getattr(server, "request_stop", None)
+            if request_stop is not None:
+                request_stop()
         thread.join(timeout=timeout + 1.0)
         if thread.is_alive():
             raise FirefoxCaptureError("local TLS capture server did not stop")
+        if failures:
+            detail = ": " + str(capture_error) if capture_error is not None else ""
+            raise FirefoxCaptureError(
+                "local TLS capture server failed" + detail
+            ) from failures[0]
         if capture_error is not None:
             raise capture_error
-        if failures:
-            raise FirefoxCaptureError("local TLS capture server failed") from failures[0]
     if manifest is None:
         raise FirefoxCaptureError("Firefox capture produced no manifest")
     return manifest
@@ -389,56 +468,67 @@ def _launch(
     verify_firefox_binary(binary, expected_sha256)
     command = [
         str(binary.resolve()),
-        "-headless",
-        "--new-instance",
-        "-profile",
+        "--headless",
+        "--no-remote",
+        "--profile",
         str(profile.resolve()),
     ]
-    if capture_waiter is None:
-        command.extend(
-            ["--screenshot", str((profile / "capture.png").resolve())]
-        )
+    command.extend(
+        ["--screenshot", str((profile / "capture.png").resolve())]
+    )
     command.extend(urls)
     environment = os.environ.copy()
     environment["MOZ_HEADLESS"] = "1"
     environment["MOZ_NO_REMOTE"] = "1"
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=environment,
-    )
-    timed_out = False
-    terminated_after_capture = False
-    if capture_waiter is not None:
-        target = sequence_start + expected_connections - 1
-        terminated_after_capture = capture_waiter(target, timeout)
-        timed_out = not terminated_after_capture
-        process.terminate()
-        try:
-            exit_code = process.wait(timeout=2.0)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            exit_code = process.wait(timeout=2.0)
-    else:
-        try:
-            exit_code = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+    with tempfile.TemporaryFile() as diagnostics:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=diagnostics,
+            env=environment,
+        )
+        timed_out = False
+        terminated_after_capture = False
+        if capture_waiter is not None:
+            target = sequence_start + expected_connections - 1
+            terminated_after_capture = capture_waiter(target, timeout)
+            timed_out = not terminated_after_capture
             process.terminate()
             try:
                 exit_code = process.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
                 process.kill()
                 exit_code = process.wait(timeout=2.0)
-    return {
+        else:
+            try:
+                exit_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                process.terminate()
+                try:
+                    exit_code = process.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    exit_code = process.wait(timeout=2.0)
+        failed = timed_out or (not terminated_after_capture and exit_code != 0)
+        stderr_tail = ""
+        if failed:
+            diagnostics.seek(0, os.SEEK_END)
+            length = diagnostics.tell()
+            diagnostics.seek(max(0, length - 4096))
+            stderr_tail = diagnostics.read(4096).decode("utf-8", errors="replace")
+            stderr_tail = stderr_tail.replace("\x00", "").strip()
+    result = {
         "sequence_start": sequence_start,
         "expected_connections": expected_connections,
         "timed_out": timed_out,
         "terminated_after_capture": terminated_after_capture,
         "exit_code": exit_code,
     }
+    if stderr_tail:
+        result["stderr_tail"] = stderr_tail
+    return result
 
 
 def validate_manifest_output(path: Path, repository: Optional[Path] = None) -> Path:
@@ -475,6 +565,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--minimum-available-memory-mb", type=int, default=4096
     )
+    parser.add_argument("--memory-wait-timeout", type=float, default=60.0)
+    parser.add_argument("--launch-attempts", type=int, default=3)
     parser.add_argument("--allow-partial", action="store_true")
     parser.add_argument("--manifest", type=Path, required=True)
     return parser
@@ -512,6 +604,8 @@ def main(argv=None) -> int:
         certificate_der=args.certificate_der.read_bytes(),
         raw_output=args.raw_output,
         minimum_available_memory=args.minimum_available_memory_mb * 1024 * 1024,
+        memory_wait_timeout=args.memory_wait_timeout,
+        launch_attempts=args.launch_attempts,
         progress=_print_capture_progress,
     )
     manifest["profile"] = provenance["profile"]

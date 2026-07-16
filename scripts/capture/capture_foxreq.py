@@ -56,6 +56,7 @@ def capture_foxreq(
     count,
     timeout,
     cargo,
+    profile="firefox_152",
     minimum_available_memory=0,
     memory_reader=None,
     runner=None,
@@ -75,6 +76,8 @@ def capture_foxreq(
         raise FoxreqCaptureError("capture port is invalid")
     if mode not in ("cold", "resumed"):
         raise FoxreqCaptureError("capture mode must be cold or resumed")
+    if profile not in ("firefox_140_esr", "firefox_152"):
+        raise FoxreqCaptureError("capture profile is unsupported")
     if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 1000:
         raise FoxreqCaptureError("capture count must be between 1 and 1000")
     if timeout <= 0:
@@ -101,7 +104,7 @@ def capture_foxreq(
     environment = os.environ.copy()
     environment["CARGO_BUILD_JOBS"] = "1"
     environment["FOXREQ_NSS_RUNTIME_DIR"] = str(runtime)
-    command = [
+    base_command = [
         str(cargo),
         "run",
         "--quiet",
@@ -116,15 +119,16 @@ def capture_foxreq(
         str(runtime),
         "--ca-der",
         str(ca_der),
+        "--profile",
+        profile,
         "--host",
         host,
         "--port",
         str(port),
         "--mode",
         mode,
-        "--count",
-        str(count),
     ]
+    process_counts = [1] * count if mode == "cold" else [count]
     failures = []
     runner = runner or subprocess.run
     with output_path.open("x", encoding="utf-8", newline="\n") as output:
@@ -154,27 +158,42 @@ def capture_foxreq(
             raise FoxreqCaptureError("local TLS capture server did not start")
         if failures:
             raise FoxreqCaptureError("local TLS capture server failed to start") from failures[0]
+        capture_error = None
         try:
-            completed = runner(
-                command,
-                cwd=str(repository),
-                env=environment,
-                timeout=timeout,
-            )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise FoxreqCaptureError("foxreq capture process failed") from error
+            for process_count in process_counts:
+                command = base_command + ["--count", str(process_count)]
+                try:
+                    completed = runner(
+                        command,
+                        cwd=str(repository),
+                        env=environment,
+                        timeout=timeout,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    raise FoxreqCaptureError(
+                        "foxreq capture process failed"
+                    ) from error
+                if completed.returncode != 0:
+                    raise FoxreqCaptureError(
+                        "foxreq capture process returned {}".format(
+                            completed.returncode
+                        )
+                    )
+        except Exception as error:
+            capture_error = error
+            server.request_stop()
         thread.join(timeout=timeout + 1.0)
         if thread.is_alive():
             raise FoxreqCaptureError("local TLS capture server did not stop")
         if failures:
             raise FoxreqCaptureError("local TLS capture server failed") from failures[0]
-        if completed.returncode != 0:
-            raise FoxreqCaptureError(
-                "foxreq capture process returned {}".format(completed.returncode)
-            )
+        if capture_error is not None:
+            raise capture_error
     return {
         "mode": mode,
+        "profile": profile,
         "count": count,
+        "process_count": len(process_counts),
         "available_memory_before_bytes": available_memory,
         "minimum_available_memory_bytes": minimum_available_memory,
     }
@@ -193,6 +212,11 @@ def main(argv=None):
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8443)
     parser.add_argument("--mode", choices=("cold", "resumed"), required=True)
+    parser.add_argument(
+        "--profile",
+        choices=("firefox_140_esr", "firefox_152"),
+        default="firefox_152",
+    )
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument(
@@ -214,6 +238,7 @@ def main(argv=None):
             count=args.count,
             timeout=args.timeout,
             cargo=args.cargo,
+            profile=args.profile,
             minimum_available_memory=(
                 args.minimum_available_memory_mb * 1024 * 1024
             ),

@@ -20,10 +20,12 @@ class RealApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         runtime = os.environ.get("FOXREQ_NSS_RUNTIME_DIR")
+        runtime_140 = os.environ.get("FOXREQ_RUNTIME_FIREFOX_140_ESR")
         fixture = os.environ.get("FOXREQ_PY_TEST_FIXTURE")
         if not runtime or not fixture:
             raise unittest.SkipTest("real Python API fixture environment is absent")
         cls.runtime = Path(runtime).resolve()
+        cls.runtime_140 = Path(runtime_140).resolve() if runtime_140 else None
         cls.fixture = Path(fixture).resolve()
         required = ("ca.pem", "server.pem", "server.key")
         if not cls.runtime.is_dir() or not all(
@@ -174,6 +176,20 @@ class RealApiTests(unittest.TestCase):
         self.assertEqual(response.http_version, "HTTP/1.1")
         self.assertEqual(response.content, b"OK")
         self.assertEqual(response.headers.get_all("set-cookie"), ("a=1", "b=2"))
+
+    def test_firefox_140_esr_uses_its_exact_runtime(self):
+        if self.runtime_140 is None or not self.runtime_140.is_dir():
+            self.skipTest("Firefox 140 ESR runtime is absent")
+        with self.scenario("fixed", 1, ("GET",), ("/firefox-140",), (b"",)) as origin:
+            response = foxreq.get(
+                origin + "/firefox-140",
+                impersonate="firefox_140_esr",
+                runtime_dir=self.runtime_140,
+                verify=self.fixture / "ca.pem",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"OK")
 
     def test_json_post_crosses_the_native_worker(self):
         body = '{"message":"中文"}'.encode("utf-8")

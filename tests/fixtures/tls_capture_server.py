@@ -180,10 +180,15 @@ class TlsCaptureServer:
     mode: str = "cold"
     allow_non_loopback: bool = False
     timeout: float = 10.0
+    accept_timeout: Optional[float] = None
     ready: Event = field(default_factory=Event, init=False)
     bound_port: Optional[int] = field(default=None, init=False)
     _completion: Condition = field(default_factory=Condition, init=False)
     _completed: int = field(default=0, init=False)
+    _stop: Event = field(default_factory=Event, init=False)
+
+    def request_stop(self) -> None:
+        self._stop.set()
 
     def wait_for_completed(self, count: int, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -206,6 +211,11 @@ class TlsCaptureServer:
 
         if isinstance(count, bool) or not isinstance(count, int) or count < 1:
             raise ValueError("count must be positive")
+        accept_timeout = (
+            self.timeout if self.accept_timeout is None else self.accept_timeout
+        )
+        if accept_timeout <= 0:
+            raise ValueError("accept timeout must be positive")
         capture_label(self.mode, 1)
         host = validate_bind_host(self.host, self.allow_non_loopback)
         if not self.certificate.is_file() or not self.private_key.is_file():
@@ -219,12 +229,22 @@ class TlsCaptureServer:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind((host, self.port))
             listener.listen(8)
-            listener.settimeout(self.timeout)
+            listener.settimeout(min(1.0, accept_timeout))
             self.bound_port = listener.getsockname()[1]
             self.ready.set()
             sequence = 1
+            accept_deadline = time.monotonic() + accept_timeout
             while sequence <= count:
-                connection, _peer = listener.accept()
+                if self._stop.is_set():
+                    return
+                try:
+                    connection, _peer = listener.accept()
+                except socket.timeout:
+                    if self._stop.is_set():
+                        return
+                    if time.monotonic() >= accept_deadline:
+                        raise
+                    continue
                 with connection:
                     try:
                         capture_tls_connection(
@@ -242,6 +262,7 @@ class TlsCaptureServer:
                         continue
                 self._mark_completed(sequence)
                 sequence += 1
+                accept_deadline = time.monotonic() + accept_timeout
 
 
 def main(argv=None) -> int:

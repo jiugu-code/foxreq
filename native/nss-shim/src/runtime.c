@@ -53,6 +53,9 @@ static int slice_equals(foxreq_nss_slice slice, const char *expected) {
 }
 
 static const char *runtime_profile_id(foxreq_nss_slice profile) {
+  if (slice_equals(profile, "firefox_140_esr")) {
+    return "firefox_140_esr";
+  }
   if (slice_equals(profile, "firefox_152")) {
     return "firefox_152";
   }
@@ -60,6 +63,9 @@ static const char *runtime_profile_id(foxreq_nss_slice profile) {
 }
 
 static uint32_t runtime_profile_value(const char *profile_id) {
+  if (profile_id != NULL && strcmp(profile_id, "firefox_140_esr") == 0) {
+    return FOXREQ_NSS_PROFILE_140;
+  }
   if (profile_id != NULL && strcmp(profile_id, "firefox_152") == 0) {
     return FOXREQ_NSS_PROFILE_152;
   }
@@ -70,6 +76,11 @@ static int profile_versions(const char *profile_id, const char **out_nss,
                             const char **out_nspr) {
   if (profile_id == NULL || out_nss == NULL || out_nspr == NULL) {
     return 0;
+  }
+  if (strcmp(profile_id, "firefox_140_esr") == 0) {
+    *out_nss = "3.112.5";
+    *out_nspr = "4.36.2";
+    return 1;
   }
   if (strcmp(profile_id, "firefox_152") == 0) {
     *out_nss = "3.124";

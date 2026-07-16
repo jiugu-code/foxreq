@@ -1,51 +1,50 @@
 """Generated runtime lock data shipped inside the foxreq wheel.
 
-Do not edit this module by hand. ``scripts/runtime/lock_firefox_release.py``
-regenerates it from the reviewed JSON lock files in ``third_party``.
+Regenerate with scripts/runtime/lock_firefox_release.py; do not edit.
 """
 
-RUNTIME_LOCKS = {
-    ("firefox_152", "windows-x86_64"): {
-        "schema_version": 1,
-        "platform": "windows-x86_64",
-        "source_id": "firefox-windows-x86_64-en-us",
-        "source_sha256": (
-            "3d4fcc5370bb183c9535d64b98d946c2dacf664a394ebcc02844e361d58d59b4"
-        ),
-        "source_size": 88379520,
-        "firefox_version": "152.0.6",
-        "firefox_build_id": "20260713164047",
-        "nss_version": "3.124",
-        "nspr_version": "4.39",
-        "files": [
-            {
-                "filename": "freebl3.dll",
-                "size": 1238144,
-                "sha256": (
-                    "cdfa18b8b81e2b31298858af6d99398ef7ecfb9a9f492bace8e4a668de180878"
-                ),
-            },
-            {
-                "filename": "mozglue.dll",
-                "size": 709248,
-                "sha256": (
-                    "d939f19253ab3057a07153bc6c5adcac2d88dc22f35d54fe2ab62c237ffeab39"
-                ),
-            },
-            {
-                "filename": "nss3.dll",
-                "size": 2973824,
-                "sha256": (
-                    "eebe84eef0e5f74581c00a9f077df2f4e29ff385b25e3789f641c9d7ff84f190"
-                ),
-            },
-            {
-                "filename": "softokn3.dll",
-                "size": 353920,
-                "sha256": (
-                    "9304d1f5e40c3524a13cddc472592ebda6038316c6a0175963a91bd7b430b308"
-                ),
-            },
-        ],
-    }
-}
+RUNTIME_LOCKS = {('firefox_140_esr', 'windows-x86_64'): {'files': [{'filename': 'freebl3.dll',
+                                                    'sha256': '8e29f2d6c516fa3480caad1a9034e60ce94e889040e64463abb672cfc037ddfe',
+                                                    'size': 1070720},
+                                                   {'filename': 'mozglue.dll',
+                                                    'sha256': '50caea943e22be0d8bbaf471a7ccfc736a03c7e8110243363e110a79a9fd37ec',
+                                                    'size': 933504},
+                                                   {'filename': 'nss3.dll',
+                                                    'sha256': '1ecd5ee8fdba8b954464ce762019811317c70f52910fd679fff6924a6a1a2449',
+                                                    'size': 2922624},
+                                                   {'filename': 'softokn3.dll',
+                                                    'sha256': 'd5c80039bd2710d4daac02d433072d653bcc37add61194d609068ae6078a8c30',
+                                                    'size': 323712}],
+                                         'firefox_build_id': '20260609153453',
+                                         'firefox_version': '140.12.0',
+                                         'nspr_version': '4.36.2',
+                                         'nss_version': '3.112.5',
+                                         'platform': 'windows-x86_64',
+                                         'profile': 'firefox_140_esr',
+                                         'schema_version': 2,
+                                         'source_id': 'firefox-140.12.0esr-windows-x86_64-en-us',
+                                         'source_sha256': '8faf3b35e8272d320eab45bc75bb6d644b29a0ab0cced4ad243f9bbaf6148dea',
+                                         'source_sha512': '5576e0eba2ae3fe17bc3490316aad2c5280b897bc5b3f99e570b5fe3a5f2c9e28290f5e683c518c8e7493d96fc7a324f9fe5bf2456db08a5f71c0580da1e0fb5',
+                                         'source_size': 73131680,
+                                         'source_url': 'https://archive.mozilla.org/pub/firefox/releases/140.12.0esr/win64/en-US/Firefox%20Setup%20140.12.0esr.exe'},
+ ('firefox_152', 'windows-x86_64'): {'files': [{'filename': 'freebl3.dll',
+                                                'sha256': 'cdfa18b8b81e2b31298858af6d99398ef7ecfb9a9f492bace8e4a668de180878',
+                                                'size': 1238144},
+                                               {'filename': 'mozglue.dll',
+                                                'sha256': 'd939f19253ab3057a07153bc6c5adcac2d88dc22f35d54fe2ab62c237ffeab39',
+                                                'size': 709248},
+                                               {'filename': 'nss3.dll',
+                                                'sha256': 'eebe84eef0e5f74581c00a9f077df2f4e29ff385b25e3789f641c9d7ff84f190',
+                                                'size': 2973824},
+                                               {'filename': 'softokn3.dll',
+                                                'sha256': '9304d1f5e40c3524a13cddc472592ebda6038316c6a0175963a91bd7b430b308',
+                                                'size': 353920}],
+                                     'firefox_build_id': '20260713164047',
+                                     'firefox_version': '152.0.6',
+                                     'nspr_version': '4.39',
+                                     'nss_version': '3.124',
+                                     'platform': 'windows-x86_64',
+                                     'schema_version': 1,
+                                     'source_id': 'firefox-windows-x86_64-en-us',
+                                     'source_sha256': '3d4fcc5370bb183c9535d64b98d946c2dacf664a394ebcc02844e361d58d59b4',
+                                     'source_size': 88379520}}

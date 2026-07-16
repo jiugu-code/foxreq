@@ -1,6 +1,7 @@
 #include "foxreq_nss_real_internal.h"
 
 #include <limits.h>
+#include <string.h>
 
 #define FOXREQ_ARRAY_LENGTH(values) (sizeof(values) / sizeof((values)[0]))
 #define FOXREQ_SSL_SECURITY INT32_C(1)
@@ -14,7 +15,19 @@
 #define FOXREQ_TLS_1_2 UINT16_C(0x0303)
 #define FOXREQ_TLS_1_3 UINT16_C(0x0304)
 
-static const uint16_t firefox_ciphers[] = {
+typedef struct foxreq_profile_config {
+  const uint16_t *ciphers;
+  size_t cipher_count;
+} foxreq_profile_config;
+
+static const uint16_t firefox_140_ciphers[] = {
+    UINT16_C(0x1301), UINT16_C(0x1303), UINT16_C(0x1302), UINT16_C(0xC02B),
+    UINT16_C(0xC02F), UINT16_C(0xCCA9), UINT16_C(0xCCA8), UINT16_C(0xC02C),
+    UINT16_C(0xC030), UINT16_C(0xC00A), UINT16_C(0xC009), UINT16_C(0xC013),
+    UINT16_C(0xC014), UINT16_C(0x009C), UINT16_C(0x009D), UINT16_C(0x002F),
+    UINT16_C(0x0035)};
+
+static const uint16_t firefox_152_ciphers[] = {
     UINT16_C(0x1301), UINT16_C(0x1303), UINT16_C(0x1302), UINT16_C(0xC02B),
     UINT16_C(0xC02F), UINT16_C(0xCCA9), UINT16_C(0xCCA8), UINT16_C(0xC02C),
     UINT16_C(0xC030), UINT16_C(0xC00A), UINT16_C(0xC013), UINT16_C(0xC014),
@@ -29,7 +42,28 @@ static const int32_t firefox_named_groups[] = {
     INT32_C(4588), INT32_C(29),  INT32_C(23),  INT32_C(24),
     INT32_C(25),   INT32_C(256), INT32_C(257)};
 
-static int configure_ciphers(foxreq_pr_file_desc *fd) {
+static const foxreq_profile_config *profile_config(foxreq_nss_slice profile) {
+  static const uint8_t firefox_140[] = "firefox_140_esr";
+  static const uint8_t firefox_152[] = "firefox_152";
+  static const foxreq_profile_config config_140 = {
+      firefox_140_ciphers, FOXREQ_ARRAY_LENGTH(firefox_140_ciphers)};
+  static const foxreq_profile_config config_152 = {
+      firefox_152_ciphers, FOXREQ_ARRAY_LENGTH(firefox_152_ciphers)};
+  if (profile.data != NULL &&
+      profile.length == (uint64_t)(sizeof(firefox_140) - 1U) &&
+      memcmp(profile.data, firefox_140, sizeof(firefox_140) - 1U) == 0) {
+    return &config_140;
+  }
+  if (profile.data != NULL &&
+      profile.length == (uint64_t)(sizeof(firefox_152) - 1U) &&
+      memcmp(profile.data, firefox_152, sizeof(firefox_152) - 1U) == 0) {
+    return &config_152;
+  }
+  return NULL;
+}
+
+static int configure_ciphers(foxreq_pr_file_desc *fd,
+                             const foxreq_profile_config *config) {
   const uint16_t *implemented =
       foxreq_real_api.ssl_get_implemented_ciphers();
   uint16_t implemented_count =
@@ -44,10 +78,9 @@ static int configure_ciphers(foxreq_pr_file_desc *fd) {
       return 0;
     }
   }
-  for (index = 0U; index < FOXREQ_ARRAY_LENGTH(firefox_ciphers);
-       index += 1U) {
+  for (index = 0U; index < config->cipher_count; index += 1U) {
     if (foxreq_real_api.ssl_cipher_pref_set(
-            fd, (int32_t)firefox_ciphers[index], 1) != 0) {
+            fd, (int32_t)config->ciphers[index], 1) != 0) {
       return 0;
     }
   }
@@ -91,13 +124,18 @@ foxreq_nss_result foxreq_real_configure_profile(
     foxreq_nss_connection *connection,
     const foxreq_nss_connect_options *options) {
   foxreq_ssl_version_range range;
+  const foxreq_profile_config *config;
   if (connection == NULL || connection->fd == NULL || options == NULL ||
       options->alpn_wire.length > (uint64_t)UINT_MAX) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
+  config = profile_config(options->profile_id);
+  if (config == NULL) {
+    return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
+  }
   range.minimum = FOXREQ_TLS_1_2;
   range.maximum = FOXREQ_TLS_1_3;
-  if (!configure_ciphers(connection->fd) ||
+  if (!configure_ciphers(connection->fd, config) ||
       foxreq_real_api.ssl_signature_scheme_pref_set(
           connection->fd, firefox_signature_schemes,
           (unsigned int)FOXREQ_ARRAY_LENGTH(firefox_signature_schemes)) != 0 ||

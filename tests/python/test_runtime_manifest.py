@@ -151,6 +151,27 @@ class RuntimeManifestTests(unittest.TestCase):
             _runtime_locks.RUNTIME_LOCKS[("firefox_152", "windows-x86_64")],
         )
 
+    def test_embedded_firefox_140_record_matches_the_reviewed_json_lock(self):
+        repository = Path(__file__).parents[2]
+        reviewed = json.loads(
+            (
+                repository
+                / "third_party"
+                / "firefox-windows-firefox_140_esr.lock.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(2, reviewed["schema_version"])
+        self.assertEqual("140.12.0", reviewed["firefox_version"])
+        self.assertEqual("20260609153453", reviewed["firefox_build_id"])
+        self.assertEqual("3.112.5", reviewed["nss_version"])
+        self.assertEqual("4.36.2", reviewed["nspr_version"])
+        self.assertEqual(
+            reviewed,
+            _runtime_locks.RUNTIME_LOCKS[
+                ("firefox_140_esr", "windows-x86_64")
+            ],
+        )
+
 
 def _schema_two_lock(profile, platform, filename, payload):
     return {
