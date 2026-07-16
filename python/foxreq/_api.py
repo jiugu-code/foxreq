@@ -65,19 +65,14 @@ class Session:
         impersonate="firefox_152",
         timeout=30.0,
     ):
-        self._runtime_dir = resolve_runtime_dir(runtime_dir)
-        self._verify = normalize_verify(verify)
+        self._runtime_dir_input = runtime_dir
+        self._verify_input = verify
         self._timeout = normalize_timeout(timeout)
         self._impersonate = normalize_profile(impersonate)
         self._closed = False
-        try:
-            self._native = _foxreq.NativeSession(
-                str(self._runtime_dir),
-                list(self._verify.anchors),
-                self._impersonate,
-            )
-        except _foxreq.NativeError as error:
-            raise translate_native_error(error) from error
+        self._http = None
+        self._https = None
+        self._https_policy = None
 
     def request(
         self,
@@ -93,7 +88,6 @@ class Session:
         impersonate=None,
     ):
         self._ensure_open()
-        request_verify = self._resolve_request_verify(verify)
         request_profile = (
             self._impersonate
             if impersonate is None
@@ -101,7 +95,7 @@ class Session:
         )
         if request_profile != self._impersonate:
             raise ConfigurationError(
-                "a Session cannot change its TLS profile after construction"
+                "a Session cannot change its Firefox profile after construction"
             )
         normalized = normalize_request(
             method,
@@ -113,24 +107,31 @@ class Session:
             self._timeout if timeout is None else timeout,
             request_profile,
         )
-        if request_verify.insecure:
-            warnings.warn(
-                "TLS certificate verification is disabled",
-                InsecureRequestWarning,
-                stacklevel=2,
-            )
+        if normalized.scheme == "http":
+            native = self._http_session()
+            insecure = False
+        else:
+            native, policy = self._https_session()
+            request_verify = self._resolve_request_verify(verify, policy)
+            insecure = request_verify.insecure
+            if insecure:
+                warnings.warn(
+                    "TLS certificate verification is disabled",
+                    InsecureRequestWarning,
+                    stacklevel=2,
+                )
         try:
-            native = self._native.request(
+            response = native.request(
                 normalized.method,
                 normalized.url,
                 normalized.headers,
                 normalized.body,
                 normalized.timeout,
-                request_verify.insecure,
+                insecure,
             )
         except _foxreq.NativeError as error:
             raise translate_native_error(error) from error
-        return Response.from_native(native)
+        return Response.from_native(response)
 
     def get(self, url, **kwargs):
         return self.request("GET", url, **kwargs)
@@ -142,10 +143,18 @@ class Session:
         if self._closed:
             return
         self._closed = True
-        try:
-            self._native.close()
-        except _foxreq.NativeError as error:
-            raise translate_native_error(error) from error
+        failure = None
+        for native in (self._http, self._https):
+            if native is None:
+                continue
+            try:
+                native.close()
+            except _foxreq.NativeError as error:
+                if failure is None:
+                    failure = (translate_native_error(error), error)
+        if failure is not None:
+            translated, native_error = failure
+            raise translated from native_error
 
     def __enter__(self):
         self._ensure_open()
@@ -159,13 +168,37 @@ class Session:
         if self._closed:
             raise ClosedSessionError("Session is closed")
 
-    def _resolve_request_verify(self, value):
+    def _http_session(self):
+        if self._http is None:
+            try:
+                self._http = _foxreq.NativeHttpSession(self._impersonate)
+            except _foxreq.NativeError as error:
+                raise translate_native_error(error) from error
+        return self._http
+
+    def _https_session(self):
+        if self._https is None:
+            runtime_dir = resolve_runtime_dir(self._runtime_dir_input)
+            policy = normalize_verify(self._verify_input)
+            try:
+                native = _foxreq.NativeSession(
+                    str(runtime_dir),
+                    list(policy.anchors),
+                    self._impersonate,
+                )
+            except _foxreq.NativeError as error:
+                raise translate_native_error(error) from error
+            self._https = native
+            self._https_policy = policy
+        return self._https, self._https_policy
+
+    def _resolve_request_verify(self, value, session_policy):
         if value is None:
-            return self._verify
+            return session_policy
         policy = normalize_verify(value)
         if policy.insecure:
             return policy
-        if policy != self._verify:
+        if policy != session_policy:
             raise ConfigurationError(
                 "a different CA bundle requires a separate Session"
             )

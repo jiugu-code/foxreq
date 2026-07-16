@@ -1,4 +1,4 @@
-"""Deterministic loopback-only HTTPS/1.1 scenarios for foxreq tests."""
+"""Deterministic loopback-only HTTP/1.1 and HTTPS/1.1 test scenarios."""
 
 import argparse
 import socket
@@ -64,7 +64,13 @@ def build_response(scenario: str, request_index: int) -> Optional[bytes]:
         return b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nOK"
     if scenario == "keepalive-two":
         body = b"one" if request_index == 0 else b"two"
-        return b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n" + body
+        return (
+            b"HTTP/1.1 200 OK\r\n"
+            b"Set-Cookie: a=1\r\n"
+            b"Set-Cookie: b=2\r\n"
+            b"Content-Length: 3\r\n\r\n"
+            + body
+        )
     if scenario == "server-close":
         return (
             b"HTTP/1.1 200 OK\r\n"
@@ -150,7 +156,7 @@ def _request_size(data: bytearray, max_head_bytes: int) -> Optional[int]:
     return head_end + body_length
 
 
-def _read_request(connection: ssl.SSLSocket, max_head_bytes: int) -> Optional[ParsedRequest]:
+def _read_request(connection, max_head_bytes: int) -> Optional[ParsedRequest]:
     data = bytearray()
     while True:
         expected = _request_size(data, max_head_bytes)
@@ -168,8 +174,8 @@ def _read_request(connection: ssl.SSLSocket, max_head_bytes: int) -> Optional[Pa
 class Http1ScenarioServer:
     host: str
     port: int
-    certificate: Path
-    private_key: Path
+    certificate: Optional[Path]
+    private_key: Optional[Path]
     scenario: str
     timeout: float = 5.0
     stall_seconds: float = 1.0
@@ -179,6 +185,7 @@ class Http1ScenarioServer:
     expected_targets: Tuple[bytes, ...] = ()
     expected_bodies: Tuple[bytes, ...] = ()
     expected_headers: Tuple[Tuple[bytes, bytes], ...] = ()
+    plain: bool = False
 
     def serve(self, count: int) -> None:
         if count < 1:
@@ -188,13 +195,19 @@ class Http1ScenarioServer:
         if self.timeout <= 0 or self.stall_seconds < 0:
             raise ScenarioError("fixture timeouts are invalid")
         host = validate_bind_host(self.host, self.allow_non_loopback)
-        if not self.certificate.is_file() or not self.private_key.is_file():
-            raise ScenarioError("certificate and private key files are required")
-
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.set_alpn_protocols(["http/1.1"])
-        context.load_cert_chain(self.certificate, self.private_key)
+        context = None
+        if not self.plain:
+            if (
+                self.certificate is None
+                or self.private_key is None
+                or not self.certificate.is_file()
+                or not self.private_key.is_file()
+            ):
+                raise ScenarioError("certificate and private key files are required")
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.set_alpn_protocols(["http/1.1"])
+            context.load_cert_chain(self.certificate, self.private_key)
         family = socket.AF_INET6 if ":" in host else socket.AF_INET
         served = 0
         with socket.socket(family, socket.SOCK_STREAM) as listener:
@@ -206,31 +219,40 @@ class Http1ScenarioServer:
                 with connection:
                     connection.settimeout(self.timeout)
                     try:
-                        with context.wrap_socket(connection, server_side=True) as tls:
-                            while served < count:
-                                request = _read_request(tls, self.max_request_bytes)
-                                if request is None:
-                                    break
-                                self.validate_request(request, served, count)
-                                if self.scenario == "stall-read":
-                                    time.sleep(self.stall_seconds)
-                                    served += 1
-                                    break
-                                response = self._response_for(request, served)
-                                tls.sendall(response)
-                                served += 1
-                                if self.scenario in (
-                                    "close",
-                                    "server-close",
-                                    "early-close",
-                                    "malformed-length",
-                                ) or request.method == b"HEAD":
-                                    break
+                        if self.plain:
+                            served = self._serve_connection(connection, served, count)
+                        else:
+                            with context.wrap_socket(
+                                connection, server_side=True
+                            ) as tls:
+                                served = self._serve_connection(tls, served, count)
                     except (ConnectionError, OSError, ssl.SSLError):
-                        # Negative TLS and timeout cases intentionally close early.
+                        # Negative protocol and timeout cases intentionally close early.
                         continue
                 if self.scenario == "keepalive-two" and served < count:
-                    raise ScenarioError("keepalive scenario requires one TLS connection")
+                    raise ScenarioError("keepalive scenario requires one connection")
+
+    def _serve_connection(self, connection, served: int, count: int) -> int:
+        while served < count:
+            request = _read_request(connection, self.max_request_bytes)
+            if request is None:
+                break
+            self.validate_request(request, served, count)
+            if self.scenario == "stall-read":
+                time.sleep(self.stall_seconds)
+                served += 1
+                break
+            response = self._response_for(request, served)
+            connection.sendall(response)
+            served += 1
+            if self.scenario in (
+                "close",
+                "server-close",
+                "early-close",
+                "malformed-length",
+            ) or request.method == b"HEAD":
+                break
+        return served
 
     def validate_request(
         self, request: ParsedRequest, request_index: int, request_count: int
@@ -314,8 +336,9 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8443)
-    parser.add_argument("--certificate", type=Path, required=True)
-    parser.add_argument("--private-key", type=Path, required=True)
+    parser.add_argument("--plain", action="store_true")
+    parser.add_argument("--certificate", type=Path)
+    parser.add_argument("--private-key", type=Path)
     parser.add_argument("--scenario", choices=SCENARIOS, required=True)
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--timeout", type=float, default=5.0)
@@ -326,6 +349,8 @@ def main(argv=None) -> int:
     parser.add_argument("--expect-body-hex", action="append", type=_hex_bytes, default=[])
     parser.add_argument("--expect-header", action="append", type=_header_pair, default=[])
     args = parser.parse_args(argv)
+    if not args.plain and (args.certificate is None or args.private_key is None):
+        parser.error("--certificate and --private-key are required unless --plain is used")
     Http1ScenarioServer(
         host=args.host,
         port=args.port,
@@ -339,6 +364,7 @@ def main(argv=None) -> int:
         expected_targets=tuple(args.expect_target),
         expected_bodies=tuple(args.expect_body_hex),
         expected_headers=tuple(args.expect_header),
+        plain=args.plain,
     ).serve(args.count)
     return 0
 
