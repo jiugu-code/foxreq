@@ -8,6 +8,7 @@ use std::{
 
 use foxreq_core::{
     http1::{ClientError, ClientErrorKind, ClientRequest, Http1Client, OwnedHeader, Version},
+    tcp::TcpConnector,
     tls::{Runtime, RuntimeConfig, TlsError, TlsErrorKind},
     transport::{NssConnector, TransportError, TransportErrorKind, VerificationMode},
 };
@@ -119,6 +120,10 @@ pub(crate) struct WorkerHandle {
 }
 
 impl WorkerHandle {
+    pub(crate) fn spawn_plain() -> Result<Self, NativeFailure> {
+        Self::spawn_with(|| Ok(PlainBackend::new()))
+    }
+
     pub(crate) fn spawn(
         runtime_dir: PathBuf,
         trust_anchors_der: Vec<Vec<u8>>,
@@ -259,6 +264,46 @@ fn run_worker<B: ClientBackend>(receiver: &mpsc::Receiver<Command>, backend: &mu
     }
 }
 
+struct PlainBackend {
+    client: Http1Client<TcpConnector>,
+}
+
+impl PlainBackend {
+    fn new() -> Self {
+        Self {
+            client: Http1Client::new(TcpConnector::new()),
+        }
+    }
+}
+
+impl ClientBackend for PlainBackend {
+    fn execute(&mut self, request: NativeRequest) -> Result<NativeResponseData, NativeFailure> {
+        let timeout = request_timeout(request.timeout_seconds)?;
+        let response = self
+            .client
+            .execute(ClientRequest {
+                method: request.method,
+                url: request.url,
+                headers: request
+                    .headers
+                    .into_iter()
+                    .map(|(name, value)| OwnedHeader { name, value })
+                    .collect(),
+                body: request.body,
+                timeout,
+                verification: VerificationMode::Default,
+                profile_id: request.profile_id,
+            })
+            .map_err(map_client_error)?;
+        Ok(response_data(response))
+    }
+
+    fn close(&mut self) -> Result<(), NativeFailure> {
+        self.client.close();
+        Ok(())
+    }
+}
+
 struct NssBackend {
     client: Http1Client<NssConnector>,
 }
@@ -284,18 +329,7 @@ impl NssBackend {
 
 impl ClientBackend for NssBackend {
     fn execute(&mut self, request: NativeRequest) -> Result<NativeResponseData, NativeFailure> {
-        if !request.timeout_seconds.is_finite() || request.timeout_seconds <= 0.0 {
-            return Err(NativeFailure::new(
-                NativeFailureKind::InvalidArgument,
-                "request timeout must be finite and positive",
-            ));
-        }
-        let timeout = Duration::try_from_secs_f64(request.timeout_seconds).map_err(|_| {
-            NativeFailure::new(
-                NativeFailureKind::InvalidArgument,
-                "request timeout is outside the supported range",
-            )
-        })?;
+        let timeout = request_timeout(request.timeout_seconds)?;
         let response = self
             .client
             .execute(ClientRequest {
@@ -316,27 +350,46 @@ impl ClientBackend for NssBackend {
                 profile_id: request.profile_id,
             })
             .map_err(map_client_error)?;
-        Ok(NativeResponseData {
-            status: response.status,
-            reason: response.reason,
-            url: response.url,
-            version: match response.version {
-                Version::Http10 => "HTTP/1.0",
-                Version::Http11 => "HTTP/1.1",
-            }
-            .to_owned(),
-            headers: response
-                .headers
-                .into_iter()
-                .map(|header| (header.name, header.value))
-                .collect(),
-            body: response.body,
-        })
+        Ok(response_data(response))
     }
 
     fn close(&mut self) -> Result<(), NativeFailure> {
         self.client.close();
         Ok(())
+    }
+}
+
+fn request_timeout(timeout_seconds: f64) -> Result<Duration, NativeFailure> {
+    if !timeout_seconds.is_finite() || timeout_seconds <= 0.0 {
+        return Err(NativeFailure::new(
+            NativeFailureKind::InvalidArgument,
+            "request timeout must be finite and positive",
+        ));
+    }
+    Duration::try_from_secs_f64(timeout_seconds).map_err(|_| {
+        NativeFailure::new(
+            NativeFailureKind::InvalidArgument,
+            "request timeout is outside the supported range",
+        )
+    })
+}
+
+fn response_data(response: foxreq_core::http1::ClientResponse) -> NativeResponseData {
+    NativeResponseData {
+        status: response.status,
+        reason: response.reason,
+        url: response.url,
+        version: match response.version {
+            Version::Http10 => "HTTP/1.0",
+            Version::Http11 => "HTTP/1.1",
+        }
+        .to_owned(),
+        headers: response
+            .headers
+            .into_iter()
+            .map(|header| (header.name, header.value))
+            .collect(),
+        body: response.body,
     }
 }
 

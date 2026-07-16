@@ -41,3 +41,28 @@ fn adapts_nss_connections_to_deadline_aware_transport() {
     );
     assert_eq!(testing::written_data(&stream).unwrap(), b"bo");
 }
+
+#[test]
+fn rejects_plain_http_before_opening_an_nss_connection() {
+    let _guard = testing::lock();
+    let runtime = Runtime::new().unwrap();
+    let mut connector = NssConnector::new(runtime, 8).expect("NSS connector");
+
+    let error = connector
+        .connect(
+            &ConnectTarget {
+                scheme: Scheme::Http,
+                host: "example.test".to_owned(),
+                port: 80,
+                profile_id: "firefox_152".to_owned(),
+                verification: VerificationMode::Default,
+            },
+            Duration::from_secs(1),
+        )
+        .expect_err("NSS connector must reject plain HTTP");
+
+    assert_eq!(
+        error.kind(),
+        foxreq_core::transport::TransportErrorKind::Unsupported
+    );
+}

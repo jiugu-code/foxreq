@@ -2,6 +2,7 @@
 
 pub mod deadline;
 pub mod http1;
+pub mod tcp;
 #[cfg(feature = "nss")]
 pub mod tls;
 pub mod transport;

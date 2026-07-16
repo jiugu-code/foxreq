@@ -113,6 +113,12 @@ impl Connector for NssConnector {
         target: &ConnectTarget,
         timeout: Duration,
     ) -> Result<Self::Stream, TransportError> {
+        if target.scheme != Scheme::Https {
+            return Err(TransportError::new(
+                TransportErrorKind::Unsupported,
+                "NSS transport supports HTTPS only",
+            ));
+        }
         let verification = match target.verification {
             VerificationMode::Default => RequestVerification::Default,
             VerificationMode::InsecureTestOnly => RequestVerification::InsecureTestOnly,
