@@ -1,16 +1,25 @@
 use std::net::Ipv6Addr;
 
+use crate::transport::Scheme;
+
 use super::{ClientError, ClientErrorKind};
 
 pub(super) struct ParsedUrl {
+    pub scheme: Scheme,
     pub host: String,
     pub port: u16,
     pub authority: Vec<u8>,
     pub target: Vec<u8>,
 }
 
-pub(super) fn parse_https_url(url: &str) -> Result<ParsedUrl, ClientError> {
-    let remainder = url.strip_prefix("https://").ok_or_else(invalid_url)?;
+pub(super) fn parse_url(url: &str) -> Result<ParsedUrl, ClientError> {
+    let (scheme, default_port, remainder) = if let Some(remainder) = url.strip_prefix("http://") {
+        (Scheme::Http, 80, remainder)
+    } else if let Some(remainder) = url.strip_prefix("https://") {
+        (Scheme::Https, 443, remainder)
+    } else {
+        return Err(invalid_url());
+    };
     if remainder.is_empty()
         || remainder.contains('#')
         || remainder
@@ -40,8 +49,9 @@ pub(super) fn parse_https_url(url: &str) -> Result<ParsedUrl, ClientError> {
         return Err(invalid_url());
     }
 
-    let (host, port) = parse_authority(authority_text)?;
+    let (host, port) = parse_authority(authority_text, default_port)?;
     Ok(ParsedUrl {
+        scheme,
         host,
         port,
         authority: authority_text.as_bytes().to_vec(),
@@ -67,14 +77,14 @@ fn valid_percent_encoding(value: &[u8]) -> bool {
     true
 }
 
-fn parse_authority(authority: &str) -> Result<(String, u16), ClientError> {
+fn parse_authority(authority: &str, default_port: u16) -> Result<(String, u16), ClientError> {
     if let Some(bracketed) = authority.strip_prefix('[') {
         let end = bracketed.find(']').ok_or_else(invalid_url)?;
         let host = &bracketed[..end];
         host.parse::<Ipv6Addr>().map_err(|_| invalid_url())?;
         let tail = &bracketed[end + 1..];
         let port = if tail.is_empty() {
-            443
+            default_port
         } else {
             parse_port(tail.strip_prefix(':').ok_or_else(invalid_url)?)?
         };
@@ -86,7 +96,7 @@ fn parse_authority(authority: &str) -> Result<(String, u16), ClientError> {
     let (host, port) = match authority.rsplit_once(':') {
         Some((host, port)) if !host.contains(':') => (host, parse_port(port)?),
         Some(_) => return Err(invalid_url()),
-        None => (authority, 443),
+        None => (authority, default_port),
     };
     if !valid_ascii_host(host) {
         return Err(invalid_url());
@@ -120,5 +130,5 @@ fn valid_ascii_host(host: &str) -> bool {
 }
 
 fn invalid_url() -> ClientError {
-    ClientError::new(ClientErrorKind::InvalidUrl, "invalid HTTPS URL")
+    ClientError::new(ClientErrorKind::InvalidUrl, "invalid HTTP URL")
 }

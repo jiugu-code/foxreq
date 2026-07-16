@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use foxreq_core::{
     tls::{testing, Runtime},
-    transport::{ConnectTarget, Connector, NssConnector, TransportStream, VerificationMode},
+    transport::{
+        ConnectTarget, Connector, NssConnector, Scheme, TransportStream, VerificationMode,
+    },
 };
 
 #[test]
@@ -15,6 +17,7 @@ fn adapts_nss_connections_to_deadline_aware_transport() {
     let mut stream = connector
         .connect(
             &ConnectTarget {
+                scheme: Scheme::Https,
                 host: "example.test".to_owned(),
                 port: 443,
                 profile_id: "firefox_152".to_owned(),

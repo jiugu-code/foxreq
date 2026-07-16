@@ -11,8 +11,15 @@ pub enum VerificationMode {
     InsecureTestOnly,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Scheme {
+    Http,
+    Https,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectTarget {
+    pub scheme: Scheme,
     pub host: String,
     pub port: u16,
     pub profile_id: String,

@@ -17,7 +17,7 @@ use super::{
 };
 
 pub use error::{ClientError, ClientErrorKind};
-use url::{parse_https_url, ParsedUrl};
+use url::{parse_url, ParsedUrl};
 
 const READ_BUFFER_BYTES: usize = 16 * 1024;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -76,6 +76,7 @@ pub struct ClientResponse {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Origin {
+    scheme: crate::transport::Scheme,
     host: String,
     port: u16,
     profile_id: String,
@@ -106,20 +107,25 @@ impl<C: Connector> Http1Client<C> {
             ));
         }
         let deadline = Deadline::after(request.timeout).map_err(map_deadline)?;
-        if request.profile_id != "firefox_152" {
+        if !matches!(
+            request.profile_id.as_str(),
+            "firefox_140_esr" | "firefox_152"
+        ) {
             return Err(ClientError::new(
                 ClientErrorKind::InvalidProfile,
                 "invalid TLS profile",
             ));
         }
-        let parsed = parse_https_url(&request.url)?;
+        let parsed = parse_url(&request.url)?;
         let origin = Origin {
+            scheme: parsed.scheme,
             host: parsed.host.clone(),
             port: parsed.port,
             profile_id: request.profile_id.clone(),
             verification: request.verification,
         };
         let target = ConnectTarget {
+            scheme: parsed.scheme,
             host: parsed.host.clone(),
             port: parsed.port,
             profile_id: request.profile_id.clone(),

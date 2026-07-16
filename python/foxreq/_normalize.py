@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 from ._exceptions import ConfigurationError, InvalidRequestError
+from ._profiles import get_profile
 
 
 _HEADER_TOKEN = frozenset(
@@ -25,6 +26,7 @@ _END_CERTIFICATE = "-----END CERTIFICATE-----"
 class NormalizedRequest:
     method: bytes
     url: str
+    scheme: str
     headers: tuple
     body: bytes
     timeout: float
@@ -48,7 +50,7 @@ def normalize_request(
     impersonate,
 ):
     normalized_method = _normalize_method(method)
-    normalized_url = _normalize_url(url, params)
+    normalized_url, scheme = _normalize_url(url, params)
     normalized_headers = list(_normalize_headers(headers))
     if data is not None and json_value is not None:
         raise InvalidRequestError("data and json are mutually exclusive")
@@ -66,13 +68,17 @@ def normalize_request(
             normalized_headers.append((b"Content-Type", b"application/json"))
     else:
         body = _normalize_body(data)
+    profile = get_profile(impersonate)
+    if not any(name.lower() == b"user-agent" for name, _ in normalized_headers):
+        normalized_headers.insert(0, (b"User-Agent", profile.user_agent.encode("ascii")))
     return NormalizedRequest(
         method=normalized_method,
         url=normalized_url,
+        scheme=scheme,
         headers=tuple(normalized_headers),
         body=body,
         timeout=normalize_timeout(timeout),
-        profile=normalize_profile(impersonate),
+        profile=profile.profile_id,
     )
 
 
@@ -89,9 +95,7 @@ def normalize_timeout(value):
 
 
 def normalize_profile(value):
-    if value != "firefox_152":
-        raise InvalidRequestError("impersonate must be 'firefox_152'")
-    return value
+    return get_profile(value).profile_id
 
 
 def normalize_verify(value):
@@ -148,8 +152,9 @@ def _normalize_url(value, params):
         port = parsed.port
     except ValueError as exc:
         raise InvalidRequestError("url authority is invalid") from exc
-    if parsed.scheme.lower() != "https" or parsed.hostname is None:
-        raise InvalidRequestError("only absolute https URLs are supported")
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https") or parsed.hostname is None:
+        raise InvalidRequestError("only absolute http and https URLs are supported")
     if parsed.username is not None or parsed.password is not None:
         raise InvalidRequestError("url userinfo is not supported")
     hostname = parsed.hostname
@@ -176,7 +181,7 @@ def _normalize_url(value, params):
             raise InvalidRequestError("params must be a mapping or pair sequence") from exc
         if encoded:
             query = query + ("&" if query else "") + encoded
-    return urlunsplit(("https", authority, path, query, ""))
+    return urlunsplit((scheme, authority, path, query, "")), scheme
 
 
 def _normalize_headers(value):

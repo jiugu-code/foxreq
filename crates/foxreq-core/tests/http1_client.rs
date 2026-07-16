@@ -2,7 +2,9 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Duration};
 
 use foxreq_core::{
     http1::{ClientErrorKind, ClientRequest, Http1Client, OwnedHeader},
-    transport::{ConnectTarget, Connector, TransportError, TransportErrorKind, TransportStream},
+    transport::{
+        ConnectTarget, Connector, Scheme, TransportError, TransportErrorKind, TransportStream,
+    },
 };
 
 #[derive(Default)]
@@ -11,6 +13,7 @@ struct ScriptState {
     close_count: usize,
     responses: VecDeque<Vec<u8>>,
     read_extra: usize,
+    targets: Vec<ConnectTarget>,
     writes: Vec<Vec<u8>>,
     write_extra: usize,
 }
@@ -43,14 +46,45 @@ impl Connector for ScriptedConnector {
 
     fn connect(
         &mut self,
-        _target: &ConnectTarget,
+        target: &ConnectTarget,
         _timeout: Duration,
     ) -> Result<Self::Stream, TransportError> {
-        self.state.borrow_mut().connect_count += 1;
+        let mut state = self.state.borrow_mut();
+        state.connect_count += 1;
+        state.targets.push(target.clone());
         Ok(ScriptedStream {
             state: Rc::clone(&self.state),
         })
     }
+}
+
+#[test]
+fn parses_http_and_https_with_distinct_schemes_and_ports() {
+    let (connector, state) = ScriptedConnector::new([
+        b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".to_vec(),
+        b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".to_vec(),
+    ]);
+    let mut client = Http1Client::new(connector);
+
+    client
+        .execute(ClientRequest::get(
+            "http://example.test/plain",
+            Duration::from_secs(1),
+        ))
+        .expect("HTTP response");
+    client
+        .execute(ClientRequest::get(
+            "https://example.test/secure",
+            Duration::from_secs(1),
+        ))
+        .expect("HTTPS response");
+
+    let state = state.borrow();
+    assert_eq!(state.targets.len(), 2);
+    assert_eq!(state.targets[0].scheme, Scheme::Http);
+    assert_eq!(state.targets[0].port, 80);
+    assert_eq!(state.targets[1].scheme, Scheme::Https);
+    assert_eq!(state.targets[1].port, 443);
 }
 
 impl TransportStream for ScriptedStream {

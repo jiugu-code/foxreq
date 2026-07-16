@@ -34,9 +34,11 @@ class NormalizeRequestTests(unittest.TestCase):
             "https://xn--fsqu00a.test/path?existing=1&x=first&x=second",
         )
         self.assertEqual(
-            request.headers,
+            request.headers[1:],
             ((b"X-Order", b"first"), (b"X-Order", b"second")),
         )
+        self.assertEqual(request.headers[0][0], b"User-Agent")
+        self.assertIn(b"Firefox/152.0", request.headers[0][1])
         self.assertEqual(request.timeout, 2.5)
 
     def test_json_is_compact_utf8_and_adds_content_type_once(self):
@@ -51,7 +53,8 @@ class NormalizeRequestTests(unittest.TestCase):
             "firefox_152",
         )
         self.assertEqual(request.body, '{"message":"中文"}'.encode("utf-8"))
-        self.assertEqual(request.headers, ((b"content-type", b"application/custom"),))
+        self.assertEqual(request.headers[1:], ((b"content-type", b"application/custom"),))
+        self.assertEqual(request.headers[0][0], b"User-Agent")
 
         automatic = normalize_request(
             "POST",
@@ -99,17 +102,6 @@ class NormalizeRequestTests(unittest.TestCase):
         with self.assertRaises(InvalidRequestError):
             normalize_request(
                 "GET",
-                "http://example.test/",
-                None,
-                None,
-                None,
-                None,
-                1,
-                "firefox_152",
-            )
-        with self.assertRaises(InvalidRequestError):
-            normalize_request(
-                "GET",
                 "https://user@example.test/",
                 None,
                 None,
@@ -118,6 +110,37 @@ class NormalizeRequestTests(unittest.TestCase):
                 1,
                 "firefox_152",
             )
+
+    def test_http_and_default_user_agent(self):
+        automatic = normalize_request(
+            "GET",
+            "http://example.test/path",
+            None,
+            None,
+            None,
+            None,
+            1,
+            "firefox_140_esr",
+        )
+        self.assertEqual(automatic.scheme, "http")
+        self.assertEqual(automatic.headers[0][0], b"User-Agent")
+        self.assertIn(b"Firefox/140.0", automatic.headers[0][1])
+
+        supplied = normalize_request(
+            "GET",
+            "https://example.test/",
+            None,
+            (("uSeR-aGeNt", "custom"), ("X-Order", "first")),
+            None,
+            None,
+            1,
+            "firefox_152",
+        )
+        self.assertEqual(supplied.scheme, "https")
+        self.assertEqual(
+            supplied.headers,
+            ((b"uSeR-aGeNt", b"custom"), (b"X-Order", b"first")),
+        )
 
 
 class VerifyPolicyTests(unittest.TestCase):
