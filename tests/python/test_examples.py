@@ -21,14 +21,16 @@ class ExampleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         runtime = os.environ.get("FOXREQ_NSS_RUNTIME_DIR")
+        runtime_140 = os.environ.get("FOXREQ_RUNTIME_FIREFOX_140_ESR")
         fixture = os.environ.get("FOXREQ_PY_TEST_FIXTURE")
-        if not runtime or not fixture:
+        if not runtime or not runtime_140 or not fixture:
             raise unittest.SkipTest("real example fixture environment is absent")
         cls.runtime = Path(runtime).resolve()
+        cls.runtime_140 = Path(runtime_140).resolve()
         cls.fixture = Path(fixture).resolve()
 
     @contextmanager
-    def scenario(self, scenario, methods, targets, bodies, headers=()):
+    def scenario(self, scenario, methods, targets, bodies, headers=(), plain=False):
         port = _free_port()
         command = [
             sys.executable,
@@ -38,10 +40,6 @@ class ExampleTests(unittest.TestCase):
             "127.0.0.1",
             "--port",
             str(port),
-            "--certificate",
-            str(self.fixture / "server.pem"),
-            "--private-key",
-            str(self.fixture / "server.key"),
             "--scenario",
             scenario,
             "--count",
@@ -49,6 +47,17 @@ class ExampleTests(unittest.TestCase):
             "--timeout",
             "8",
         ]
+        if plain:
+            command.append("--plain")
+        else:
+            command.extend(
+                (
+                    "--certificate",
+                    str(self.fixture / "server.pem"),
+                    "--private-key",
+                    str(self.fixture / "server.key"),
+                )
+            )
         for method in methods:
             command.extend(("--expect-method", method))
         for target in targets:
@@ -66,7 +75,7 @@ class ExampleTests(unittest.TestCase):
         )
         try:
             time.sleep(0.4)
-            yield "https://127.0.0.1:{}".format(port)
+            yield "{}://127.0.0.1:{}".format("http" if plain else "https", port)
             stdout, stderr = process.communicate(timeout=10)
             self.assertEqual(
                 process.returncode,
@@ -101,6 +110,8 @@ class ExampleTests(unittest.TestCase):
                     str(self.runtime),
                     "--ca-pem",
                     str(self.fixture / "ca.pem"),
+                    "--impersonate",
+                    "firefox_152",
                 ],
                 cwd=str(REPOSITORY),
                 capture_output=True,
@@ -126,9 +137,11 @@ class ExampleTests(unittest.TestCase):
                     "--origin",
                     origin,
                     "--runtime",
-                    str(self.runtime),
+                    str(self.runtime_140),
                     "--ca-pem",
                     str(self.fixture / "ca.pem"),
+                    "--impersonate",
+                    "firefox_140_esr",
                 ],
                 cwd=str(REPOSITORY),
                 capture_output=True,
@@ -136,6 +149,32 @@ class ExampleTests(unittest.TestCase):
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("body_length=3", completed.stdout)
+
+    def test_basic_example_supports_plain_http_without_a_runtime(self):
+        body = b'{"ok":true}'
+        with self.scenario(
+            "fixed",
+            ("GET", "POST"),
+            ("/plain", "/plain"),
+            (b"", body),
+            ("X-Order:first", "X-Order:second"),
+            plain=True,
+        ) as origin:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "examples/python_basic.py",
+                    "--url",
+                    origin + "/plain",
+                    "--impersonate",
+                    "firefox_140_esr",
+                ],
+                cwd=str(REPOSITORY),
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.count("status_code=200"), 2)
 
     def test_examples_reject_non_loopback_without_explicit_authorization(self):
         completed = subprocess.run(

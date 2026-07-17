@@ -15,6 +15,23 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/ToolchainPolicy.cmake")
 
 if(FOXREQ_NSS_REAL)
+  if(WIN32)
+    set(
+      FOXREQ_PLATFORM_SOURCES
+      src/platform_windows.c
+      src/socket_windows.c
+    )
+    set(FOXREQ_PLATFORM_LIBRARIES ws2_32 bcrypt)
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(
+      FOXREQ_PLATFORM_SOURCES
+      src/platform_posix.c
+      src/socket_posix.c
+    )
+    set(FOXREQ_PLATFORM_LIBRARIES ${CMAKE_DL_LIBS} pthread)
+  else()
+    message(FATAL_ERROR "The real NSS backend supports Windows and Linux only")
+  endif()
   add_library(
     foxreq_nss STATIC
     src/compression.c
@@ -23,9 +40,13 @@ if(FOXREQ_NSS_REAL)
     src/profile.c
     src/runtime.c
     src/verify.c
+    ${FOXREQ_PLATFORM_SOURCES}
   )
   target_compile_definitions(foxreq_nss PUBLIC FOXREQ_NSS_REAL=1)
-  target_link_libraries(foxreq_nss PRIVATE ws2_32)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(foxreq_nss PRIVATE _POSIX_C_SOURCE=200809L)
+  endif()
+  target_link_libraries(foxreq_nss PRIVATE ${FOXREQ_PLATFORM_LIBRARIES})
 else()
   add_library(foxreq_nss STATIC src/foxreq_nss.c)
   target_compile_definitions(foxreq_nss PUBLIC FOXREQ_NSS_STUB=1)

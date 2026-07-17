@@ -1,12 +1,8 @@
 #ifndef FOXREQ_NSS_REAL_INTERNAL_H
 #define FOXREQ_NSS_REAL_INTERNAL_H
 
-#define WIN32_LEAN_AND_MEAN
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-
 #include "foxreq_nss.h"
+#include "platform_runtime.h"
 
 #include <stddef.h>
 
@@ -174,7 +170,7 @@ typedef struct foxreq_nss_api {
 struct foxreq_nss_runtime {
   uint32_t magic;
   uint32_t profile;
-  volatile LONG references;
+  volatile int32_t references;
 };
 
 struct foxreq_nss_session_cache {

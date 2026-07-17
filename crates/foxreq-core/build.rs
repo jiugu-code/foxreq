@@ -31,8 +31,8 @@ fn build_native(target: &str) {
 
     if real {
         assert!(
-            target == "x86_64-pc-windows-msvc",
-            "the real NSS backend currently supports x86_64-pc-windows-msvc only"
+            target == "x86_64-pc-windows-msvc" || target == "x86_64-unknown-linux-gnu",
+            "the real NSS backend supports x86_64 Windows MSVC and x86_64 Linux GNU only"
         );
     }
 
@@ -99,6 +99,10 @@ fn build_native(target: &str) {
     println!("cargo:rustc-link-lib=static=foxreq_nss");
     if real && target.contains("windows-msvc") {
         println!("cargo:rustc-link-lib=ws2_32");
+        println!("cargo:rustc-link-lib=bcrypt");
+    } else if real && target == "x86_64-unknown-linux-gnu" {
+        println!("cargo:rustc-link-lib=dl");
+        println!("cargo:rustc-link-lib=pthread");
     }
 }
 

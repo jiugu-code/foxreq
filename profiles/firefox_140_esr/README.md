@@ -32,7 +32,10 @@ Windows 正式线级证据门槛已通过：Firefox 冷启动基线为 100 个�
 - Python worker 启动前会使用 wheel 内嵌清单再次校验 Runtime；
 - TLS 参数只能来自本配置档的复现证据，缺少证据时拒绝降级到其他版本。
 
-Linux 使用独立运行时锁；Windows 锁与测试结果不能作为 Linux 已兼容的证据。
+Linux 使用独立运行时锁。CentOS 7 上已经完成 GCC 4.8.5 严格语法检查和
+NSS 3.112.5 / NSPR 4.36.2 Runtime 加载烟雾测试，但尚未构建
+`manylinux_2_17` wheel，也未完成 Python API 与线级证据门槛；Windows 结果
+不能替代这些 Linux 验证。
 
 配置档和 Runtime 锁只描述身份与可复现来源。捕获文件、浏览器包、动态库、
 证书私钥和其他本地产物均不得提交到 Git。

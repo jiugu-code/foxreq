@@ -1,0 +1,66 @@
+{
+  "files": [
+    {
+      "filename": "libfreeblpriv3.so",
+      "sha256": "2b8c7b08320551b2e1d437435091aa12d830500b2d71e1caccefcdb156ee8d79",
+      "size": 1293128
+    },
+    {
+      "filename": "libmozsqlite3.so",
+      "sha256": "5430d56e4963ee7edffce3df03967fd16eb09ee15324228effcd051339066724",
+      "size": 1525152
+    },
+    {
+      "filename": "libnspr4.so",
+      "sha256": "53f33292364c225bb8ec862b59e06ecf4b60ea53640da32f7e53377f039a31fb",
+      "size": 221984
+    },
+    {
+      "filename": "libnss3.so",
+      "sha256": "9de7006e8c4a88cda63d33b4a52dbadfca90eab6f5dbea2b506e164d8f9437d9",
+      "size": 813568
+    },
+    {
+      "filename": "libnssutil3.so",
+      "sha256": "ea485a3f94618a21e251f7996e8063aad4003d28c3cfc2dc455c82b76a0ea311",
+      "size": 196984
+    },
+    {
+      "filename": "libplc4.so",
+      "sha256": "045f1fd45e8da9e50d79d9d8285b866ce811e6db3ea3118813558b007549638e",
+      "size": 16552
+    },
+    {
+      "filename": "libplds4.so",
+      "sha256": "39f7f6e104a0649c127569a9461245c05558d9d8674f19fc0063967e487c815a",
+      "size": 12408
+    },
+    {
+      "filename": "libsmime3.so",
+      "sha256": "536ffc4565bd8486ed1e1b4b197e5235b3af0f9b4d9cb95a9bec61edd261919d",
+      "size": 177432
+    },
+    {
+      "filename": "libsoftokn3.so",
+      "sha256": "07fc741ab5fd435bc50878d42977af57742ce888ddb4f5fbbd430c5bff799ee5",
+      "size": 401808
+    },
+    {
+      "filename": "libssl3.so",
+      "sha256": "2753613a4ce5c1a10464705d1133ca0ed60542b9c9eb95df87a0061a7d304141",
+      "size": 453112
+    }
+  ],
+  "firefox_build_id": "20260713164047",
+  "firefox_version": "152.0.6",
+  "nspr_version": "4.39",
+  "nss_version": "3.124",
+  "platform": "linux-x86_64",
+  "profile": "firefox_152",
+  "schema_version": 2,
+  "source_id": "firefox-152.0.6-linux-x86_64-en-us",
+  "source_sha256": "c8080dad034d8c9119651463807639c6a648cb0186909988da6acc3ef2467322",
+  "source_sha512": "414b060f5e28e1b9c8818dee51896a81bd273c6cf6a4cffa53c4d7214f2c1d26d0416b9088518294435a7ead014a320a8deb910e93f3345ab6fbbbe596b4a336",
+  "source_size": 85090976,
+  "source_url": "https://archive.mozilla.org/pub/firefox/releases/152.0.6/linux-x86_64/en-US/firefox-152.0.6.tar.xz"
+}

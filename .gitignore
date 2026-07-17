@@ -4,6 +4,7 @@ __pycache__/
 .coverage
 .pytest_cache/
 /.venv/
+/.venv312/
 target/
 build/
 .cache/

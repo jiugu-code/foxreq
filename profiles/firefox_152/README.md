@@ -1,15 +1,16 @@
 # Firefox 152 profile
 
 This profile targets the official Firefox 152.0.6 release, locale `en-US`, on
-Windows x86-64 and Linux x86-64.
+Windows x86-64 and Linux x86-64. Windows is the verified Python delivery
+platform; Linux currently has only preliminary C backend evidence.
 
 The immutable Firefox release revision is
 `68dfbca029f49cab85d965451998997141758306`. Its vendored component markers are
 `NSS_3_124_RTM` and `NSPR_4_39_RTM`. The corresponding standalone source
 revisions, read from the official archives' `.hg_archival.txt`, are
 `089afe88dd219cf4b1516fd04f3b1c1fda3b7b61` and
-`54e7c1b0803d151e142e30dc0d05f12e1ec67a13`. Official release archives and
-their SHA-256 values are pinned in `third_party/native-sources.lock.json`.
+`54e7c1b0803d151e142e30dc0d05f12e1ec67a13`. Runtime identities are pinned by
+the Windows runtime lock and `third_party/firefox-linux-firefox_152.lock.json`.
 
 ## Evidence status
 
@@ -20,8 +21,10 @@ their SHA-256 values are pinned in `third_party/native-sources.lock.json`.
   the locked Firefox 152.0.6 installer, hash-verified, and exercised through
   repeated initialization and local TLS tests. This is a Windows G3 result,
   not wire-match evidence.
-- Linux compiler and runtime verification: explicitly deferred by the user for
-  the current Windows-local phase; this is not a Linux pass result.
+- Linux C backend: GCC 4.8.5 strict syntax checks and a limited CentOS 7
+  runtime load/version smoke test passed with NSS 3.124 and NSPR 4.39. A
+  manylinux wheel, Python API tests, and formal wire evidence have not passed;
+  this is not a Linux platform pass result.
 - Windows Firefox smoke evidence: two cold ClientHellos and two resumed
   ClientHellos were captured from the hash-verified Firefox 152.0.6 binary.
   Their stable extension order was fixed in these samples. This sample size is

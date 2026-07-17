@@ -3,37 +3,22 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-#include <wchar.h>
 
 typedef struct foxreq_global_runtime {
-  SRWLOCK lock;
+  foxreq_platform_mutex lock;
   uint32_t references;
-  wchar_t *directory;
-  HMODULE mozglue;
-  HMODULE nss3;
-  HMODULE freebl3;
-  HMODULE softokn3;
+  foxreq_platform_path *directory;
+  foxreq_platform_modules modules;
+  foxreq_platform_module nss3;
   const char *profile_id;
-  int winsock_started;
   uint8_t *trust_bundle;
   size_t trust_bundle_length;
   foxreq_cert_certificate **trust_certificates;
   size_t trust_certificate_count;
 } foxreq_global_runtime;
 
-static foxreq_global_runtime global_runtime = {SRWLOCK_INIT,
-                                               0U,
-                                               NULL,
-                                               NULL,
-                                               NULL,
-                                               NULL,
-                                               NULL,
-                                               NULL,
-                                               0,
-                                               NULL,
-                                               0U,
-                                               NULL,
-                                               0U};
+static foxreq_global_runtime global_runtime = {
+    .lock = FOXREQ_PLATFORM_MUTEX_INITIALIZER};
 foxreq_nss_api foxreq_real_api = {0};
 
 static int slice_is_valid(foxreq_nss_slice slice, int allow_empty) {
@@ -124,127 +109,36 @@ static int trust_bundle_is_valid(foxreq_nss_slice bundle,
   return offset == length;
 }
 
-static wchar_t *utf8_directory(foxreq_nss_slice value) {
-  int source_length;
-  int wide_length;
-  wchar_t *result;
-  if (!slice_is_valid(value, 0) || value.length > (uint64_t)INT_MAX ||
-      memchr(value.data, 0, (size_t)value.length) != NULL) {
-    return NULL;
-  }
-  source_length = (int)value.length;
-  wide_length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                                    (const char *)value.data, source_length,
-                                    NULL, 0);
-  if (wide_length <= 0 || wide_length == INT_MAX) {
-    return NULL;
-  }
-  result = (wchar_t *)calloc((size_t)wide_length + 1U, sizeof(wchar_t));
-  if (result == NULL) {
-    return NULL;
-  }
-  if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                          (const char *)value.data, source_length, result,
-                          wide_length) != wide_length) {
-    free(result);
-    return NULL;
-  }
-  return result;
-}
-
-static wchar_t *join_path(const wchar_t *directory, const wchar_t *filename) {
-  size_t directory_length = wcslen(directory);
-  size_t filename_length = wcslen(filename);
-  int needs_separator = directory_length > 0U &&
-                        directory[directory_length - 1U] != L'\\' &&
-                        directory[directory_length - 1U] != L'/';
-  size_t length;
-  wchar_t *path;
-  if (directory_length > SIZE_MAX - filename_length - 2U) {
-    return NULL;
-  }
-  length = directory_length + filename_length + (size_t)needs_separator + 1U;
-  path = (wchar_t *)calloc(length, sizeof(wchar_t));
-  if (path == NULL) {
-    return NULL;
-  }
-  memcpy(path, directory, directory_length * sizeof(wchar_t));
-  if (needs_separator) {
-    path[directory_length] = L'\\';
-    directory_length += 1U;
-  }
-  memcpy(path + directory_length, filename,
-         (filename_length + 1U) * sizeof(wchar_t));
-  return path;
-}
-
-static HMODULE load_file(const wchar_t *directory, const wchar_t *filename) {
-  wchar_t *path = join_path(directory, filename);
-  HMODULE module = NULL;
-  if (path != NULL) {
-    module = LoadLibraryExW(path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
-                                           LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-  }
-  free(path);
-  return module;
-}
-
-static FARPROC require_symbol(HMODULE module, const char *name) {
+static foxreq_platform_symbol require_symbol(foxreq_platform_module module,
+                                             const char *name) {
   if (module == NULL) {
     return NULL;
   }
-  return GetProcAddress(module, name);
+  return foxreq_platform_symbol_lookup(module, name);
 }
 
 static void clear_api(void) { memset(&foxreq_real_api, 0, sizeof(foxreq_real_api)); }
 
 static void unload_locked(void) {
-  if (global_runtime.softokn3 != NULL) {
-    FreeLibrary(global_runtime.softokn3);
-    global_runtime.softokn3 = NULL;
-  }
-  if (global_runtime.freebl3 != NULL) {
-    FreeLibrary(global_runtime.freebl3);
-    global_runtime.freebl3 = NULL;
-  }
-  if (global_runtime.nss3 != NULL) {
-    FreeLibrary(global_runtime.nss3);
-    global_runtime.nss3 = NULL;
-  }
-  if (global_runtime.mozglue != NULL) {
-    FreeLibrary(global_runtime.mozglue);
-    global_runtime.mozglue = NULL;
-  }
-  if (global_runtime.winsock_started) {
-    (void)WSACleanup();
-    global_runtime.winsock_started = 0;
-  }
+  foxreq_platform_runtime_unload(&global_runtime.modules);
+  global_runtime.nss3 = NULL;
   clear_api();
-  free(global_runtime.directory);
+  foxreq_platform_path_free(global_runtime.directory);
   global_runtime.directory = NULL;
   global_runtime.profile_id = NULL;
 }
 
-static int load_locked(wchar_t *directory, const char *profile_id) {
+static int load_locked(foxreq_platform_path *directory,
+                       const char *profile_id) {
   const char *nss_version;
   const char *nspr_version;
   const char *expected_nss;
   const char *expected_nspr;
-  WSADATA winsock;
   if (!profile_versions(profile_id, &expected_nss, &expected_nspr)) {
     return 0;
   }
-  if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) {
-    return 0;
-  }
-  global_runtime.winsock_started = 1;
-  global_runtime.mozglue = load_file(directory, L"mozglue.dll");
-  global_runtime.nss3 = load_file(directory, L"nss3.dll");
-  global_runtime.freebl3 = load_file(directory, L"freebl3.dll");
-  global_runtime.softokn3 = load_file(directory, L"softokn3.dll");
-  if (global_runtime.mozglue == NULL || global_runtime.nss3 == NULL ||
-      global_runtime.freebl3 == NULL || global_runtime.softokn3 == NULL) {
-    unload_locked();
+  if (!foxreq_platform_runtime_load(directory, &global_runtime.modules,
+                                    &global_runtime.nss3)) {
     return 0;
   }
   foxreq_real_api.nss_get_version =
@@ -477,11 +371,11 @@ static int trust_matches_locked(foxreq_nss_slice bundle) {
                 (size_t)bundle.length) == 0;
 }
 
-static foxreq_nss_result global_acquire(wchar_t *directory,
+static foxreq_nss_result global_acquire(foxreq_platform_path *directory,
                                         foxreq_nss_slice trust_bundle,
                                         const char *profile_id) {
   foxreq_nss_result result = FOXREQ_NSS_RESULT_OK;
-  AcquireSRWLockExclusive(&global_runtime.lock);
+  foxreq_platform_mutex_lock(&global_runtime.lock);
   if (global_runtime.references == UINT32_C(0)) {
     if (global_runtime.nss3 == NULL) {
       if (!load_locked(directory, profile_id)) {
@@ -496,7 +390,8 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
     } else if (global_runtime.directory == NULL ||
                global_runtime.profile_id == NULL ||
                strcmp(global_runtime.profile_id, profile_id) != 0 ||
-               wcscmp(global_runtime.directory, directory) != 0) {
+               !foxreq_platform_path_equals(global_runtime.directory,
+                                            directory)) {
       result = FOXREQ_NSS_RESULT_STATE;
     } else {
       result = install_trust_locked(trust_bundle);
@@ -507,7 +402,8 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
   } else if (global_runtime.directory == NULL ||
              global_runtime.profile_id == NULL ||
              strcmp(global_runtime.profile_id, profile_id) != 0 ||
-             wcscmp(global_runtime.directory, directory) != 0) {
+             !foxreq_platform_path_equals(global_runtime.directory,
+                                          directory)) {
     result = FOXREQ_NSS_RESULT_STATE;
   } else if (!trust_matches_locked(trust_bundle)) {
     result = FOXREQ_NSS_RESULT_STATE;
@@ -516,13 +412,13 @@ static foxreq_nss_result global_acquire(wchar_t *directory,
   } else {
     global_runtime.references += UINT32_C(1);
   }
-  ReleaseSRWLockExclusive(&global_runtime.lock);
-  free(directory);
+  foxreq_platform_mutex_unlock(&global_runtime.lock);
+  foxreq_platform_path_free(directory);
   return result;
 }
 
 static void global_release(void) {
-  AcquireSRWLockExclusive(&global_runtime.lock);
+  foxreq_platform_mutex_lock(&global_runtime.lock);
   if (global_runtime.references > UINT32_C(0)) {
     global_runtime.references -= UINT32_C(1);
     if (global_runtime.references == UINT32_C(0)) {
@@ -533,7 +429,7 @@ static void global_release(void) {
        * trust certificates at the final active Session boundary. */
     }
   }
-  ReleaseSRWLockExclusive(&global_runtime.lock);
+  foxreq_platform_mutex_unlock(&global_runtime.lock);
 }
 
 int foxreq_real_runtime_is_valid(const foxreq_nss_runtime *runtime) {
@@ -549,11 +445,11 @@ int foxreq_real_connection_is_valid(const foxreq_nss_connection *connection) {
 }
 
 void foxreq_real_runtime_retain(foxreq_nss_runtime *runtime) {
-  (void)InterlockedIncrement(&runtime->references);
+  (void)foxreq_platform_atomic_increment(&runtime->references);
 }
 
 void foxreq_real_runtime_release(foxreq_nss_runtime *runtime) {
-  if (InterlockedDecrement(&runtime->references) == 0) {
+  if (foxreq_platform_atomic_decrement(&runtime->references) == 0) {
     global_release();
     free(runtime);
   }
@@ -565,7 +461,7 @@ foxreq_nss_result
 foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
                           foxreq_nss_runtime **out_runtime) {
   foxreq_nss_runtime *runtime;
-  wchar_t *directory;
+  foxreq_platform_path *directory;
   const char *profile_id;
   foxreq_nss_result result;
   if (out_runtime == NULL) {
@@ -580,7 +476,8 @@ foxreq_nss_runtime_create(const foxreq_nss_runtime_options *options,
       (profile_id = runtime_profile_id(options->profile_id)) == NULL) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }
-  directory = utf8_directory(options->runtime_dir);
+  directory = foxreq_platform_path_from_utf8(
+      options->runtime_dir.data, (size_t)options->runtime_dir.length);
   if (directory == NULL) {
     return FOXREQ_NSS_RESULT_INVALID_ARGUMENT;
   }

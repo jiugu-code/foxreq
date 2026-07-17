@@ -18,14 +18,31 @@ def _is_loopback(hostname: str) -> bool:
         return False
 
 
-def _validate_target(url: str, allow_authorized_target: bool) -> None:
+def _validate_target(url: str, allow_authorized_target: bool) -> str:
     parsed = urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError("target must be an absolute HTTPS URL without user information")
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise ValueError(
+            "target must be an absolute HTTP or HTTPS URL without user information"
+        )
     if not _is_loopback(parsed.hostname) and not allow_authorized_target:
         raise ValueError(
             "explicit authorization flag is required for non-loopback targets"
         )
+    return parsed.scheme
+
+
+def _request_options(args, scheme: str) -> dict:
+    options = {"impersonate": args.impersonate}
+    if scheme == "https":
+        if args.runtime is None or args.ca_pem is None:
+            raise ValueError("HTTPS requires --runtime and --ca-pem")
+        options.update(runtime_dir=args.runtime, verify=args.ca_pem)
+    return options
 
 
 def _print_response(response: foxreq.Response) -> None:
@@ -36,9 +53,15 @@ def _print_response(response: foxreq.Response) -> None:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", required=True, help="已授权的 HTTPS 请求 URL")
-    parser.add_argument("--runtime", required=True, type=Path, help="Firefox NSS 运行时目录")
-    parser.add_argument("--ca-pem", required=True, type=Path, help="测试 CA 的 PEM 文件")
+    parser.add_argument("--url", required=True, help="已授权的 HTTP 或 HTTPS 请求 URL")
+    parser.add_argument("--runtime", type=Path, help="HTTPS 使用的 Firefox NSS 运行时目录")
+    parser.add_argument("--ca-pem", type=Path, help="HTTPS 测试 CA 的 PEM 文件")
+    parser.add_argument(
+        "--impersonate",
+        choices=("firefox_140_esr", "firefox_152"),
+        default="firefox_152",
+        help="固定的 Firefox 档案，默认 firefox_152",
+    )
     parser.add_argument(
         "--allow-authorized-target",
         action="store_true",
@@ -47,14 +70,14 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        _validate_target(args.url, args.allow_authorized_target)
+        scheme = _validate_target(args.url, args.allow_authorized_target)
+        request_options = _request_options(args, scheme)
         headers = (("X-Order", "first"), ("X-Order", "second"))
         _print_response(
             foxreq.get(
                 args.url,
                 headers=headers,
-                runtime_dir=args.runtime,
-                verify=args.ca_pem,
+                **request_options,
             )
         )
         _print_response(
@@ -62,8 +85,7 @@ def main(argv=None) -> int:
                 args.url,
                 headers=headers,
                 json={"ok": True},
-                runtime_dir=args.runtime,
-                verify=args.ca_pem,
+                **request_options,
             )
         )
     except ValueError as error:

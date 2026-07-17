@@ -21,16 +21,21 @@ foxreq 使用固定 Rust 工具链、C11 NSS shim 和 PyO3/maturin 混合包。�
 
 ## 准备锁定的 Firefox NSS 运行时
 
-Windows 真实后端只加载 Firefox 152.0.6 Windows x86-64 en-US 安装包中随附的 NSS/NSPR DLL。`third_party/native-sources.lock.json` 固定官方 HTTPS 地址、文件大小与 SHA-256；`third_party/firefox-windows-runtime.lock.json` 固定 Firefox build ID、NSS/NSPR 版本及最小 DLL 集。
+Windows 真实后端支持两个相互隔离的 Runtime：Firefox 140.12.0esr（NSS 3.112.5 / NSPR 4.36.2）和 Firefox 152.0.6（NSS 3.124 / NSPR 4.39）。`third_party/firefox-windows-firefox_140_esr.lock.json` 与 `third_party/firefox-windows-runtime.lock.json` 固定官方来源、Firefox build ID、NSS/NSPR 版本及最小 DLL 集；两个目录不能交叉复用。
 
 ```powershell
-python -m scripts.provenance.fetch_sources `
-  --lock third_party/native-sources.lock.json `
-  --cache .cache/sources `
-  --id firefox-windows-x86_64-en-us
+python -m scripts.runtime.prepare_firefox_runtime `
+  --profile firefox_140_esr `
+  --platform windows-x86_64 `
+  --artifact path\to\Firefox_Setup_140.12.0esr.exe `
+  --lock third_party/firefox-windows-firefox_140_esr.lock.json `
+  --output .cache/firefox-runtime/firefox_140_esr/core
 
 python -m scripts.runtime.prepare_firefox_runtime `
-  --installer .cache/sources/firefox-152.0.6-windows-x86_64-en-us.exe `
+  --profile firefox_152 `
+  --platform windows-x86_64 `
+  --artifact path\to\Firefox_Setup_152.0.6.exe `
+  --lock third_party/firefox-windows-runtime.lock.json `
   --output .cache/firefox-runtime/core
 ```
 
@@ -38,6 +43,8 @@ python -m scripts.runtime.prepare_firefox_runtime `
 
 ```powershell
 $env:FOXREQ_NSS_RUNTIME_DIR = (Resolve-Path .cache/firefox-runtime/core).Path
+$env:FOXREQ_RUNTIME_FIREFOX_140_ESR = `
+  (Resolve-Path .cache/firefox-runtime/firefox_140_esr/core).Path
 ```
 
 ## 构建 Python wheel
@@ -119,14 +126,14 @@ $env:CARGO_BUILD_JOBS = "1"
 
 - `.cache/` 下的官方安装包、Firefox 运行时和源缓存；
 - `artifacts/` 下的短期证书、私钥、抓包、浏览器 profile 和测试输出；
-- `target/`、`build/`、`dist/`、`.venv/`；
+- `target/`、`build/`、`dist/`、`.venv/`、`.venv312/`；
 - TLS key log、真实 Cookie、Authorization 值与用户流量。
 
 ## Firefox 指纹范围
 
-Firefox 152 档案按 Firefox 顺序声明 zlib、Brotli、Zstandard TLS 证书压缩算法。解码输出受 NSS 提供缓冲区约束，C 到 Rust 回调会捕获错误和 panic。纯 Rust 解码依赖固定在 `Cargo.lock` 中。
+Firefox 140 ESR 与 152 档案都按各自浏览器证据配置 TLS 参数，并按 Firefox 顺序声明 zlib、Brotli、Zstandard TLS 证书压缩算法。解码输出受 NSS 提供缓冲区约束，C 到 Rust 回调会捕获错误和 panic。纯 Rust 解码依赖固定在 `Cargo.lock` 中。
 
-当前 Windows 少量冷连接/恢复连接样本只属于部分证据。正式比较需要 100 个冷连接 Firefox 样本、至少 2 个恢复连接 Firefox 样本，以及每种 foxreq 模式 5 个样本；不能用合成 fixture 或少量烟雾测试替代。详见 `docs/fingerprint-evidence.md` 与 `profiles/firefox_152/README.md`。
+Firefox 140 ESR 的 Windows 正式比较已使用 100 个有效浏览器冷连接、2 个有效恢复连接，以及 foxreq 的 5 个冷连接和 5 个恢复连接完成，扩展顺序、稳定字段、长度、JA3 与 JA4 均无差异。Firefox 152 仍只有少量烟雾证据，正式比较同样要求上述样本门槛；不能用合成 fixture 或少量烟雾测试替代。详见 `docs/fingerprint-evidence.md` 与两个 `profiles/` 档案说明。
 
 ## Linux 基线与当前状态
 
@@ -136,12 +143,24 @@ Firefox 152 档案按 Firefox 顺序声明 zlib、Brotli、Zstandard TLS 证书�
 ./scripts/check_toolchain.sh
 ```
 
-但当前真实 NSS shim 直接使用 Windows DLL 加载、WinSock 与系统库，尚未实现 POSIX 后端，也尚未生成或验证 manylinux_2_17 wheel。因此 Linux 只能标记为“目标/未验证”，不能标记为支持。
+真实 NSS shim 已拆分为平台窄接口。Windows 使用安全的 DLL 加载与 WinSock；Linux 使用 `dlopen`/`dlsym`、POSIX socket、`poll`、`pthread` 和 `clock_gettime`。`third_party/firefox-linux-firefox_140_esr.lock.json` 与 `third_party/firefox-linux-firefox_152.lock.json` 固定 Mozilla 官方 Linux 归档和最小 NSS/NSPR 文件集。
 
-2026-07-15 对授权 CentOS 7 主机的只读审计显示：glibc 2.17、Python 3.9.13、约 3.77 GiB 物理内存，未检测到 Rust/CMake。该环境低于 Python 和内存门槛，本阶段不安装依赖、不构建 NSS、不运行原生测试或压力测试。
+授权 CentOS 7 主机上已经完成 GCC 4.8.5 的 C11 严格语法检查，以及两个 Runtime 的有限加载/版本探测烟雾测试：Firefox 140 ESR 对应 NSS 3.112.5 / NSPR 4.36.2，Firefox 152 对应 NSS 3.124 / NSPR 4.39。该主机仍只有 Python 3.9.13、约 3.77 GiB 物理内存，且未安装 Rust/CMake，不满足 Python 3.10+ 与 4096 MiB 可用内存门槛，因此没有构建或安装 manylinux wheel，也没有运行 Linux Python API 完整验证或压测。
+
+Linux 完整入口会失败关闭，必须在符合基线的隔离环境中提供两个 Runtime、短期本地证书及待检 wheel 后串行执行：
+
+```sh
+export FOXREQ_RUNTIME_FIREFOX_140_ESR=/path/to/firefox_140_esr/core
+export FOXREQ_NSS_RUNTIME_DIR=/path/to/firefox_152/core
+export FOXREQ_PY_TEST_FIXTURE=/path/to/local/certificate-fixture
+export FOXREQ_LINUX_WHEEL=/path/to/foxreq-cp310-abi3-manylinux_2_17_x86_64.whl
+./scripts/verify_python.sh
+```
+
+在该入口完整通过前，Linux 状态只能标记为“C 后端初步兼容”，不能作为正式平台支持承诺。
 
 ## 当前原生边界
 
 `FOXREQ_NSS_STUB=ON` 产生确定性 fake backend。Rust `nss` 特性用于测试 runtime、connection、session cache、byte buffer、partial I/O、错误复制和关闭语义。
 
-`nss-real` 只从显式目录加载哈希锁定的 Firefox 运行时。Windows 上的生命周期、ALPN、证书、deadline、HTTPS/1.1 与 Python API 本地 fixture 测试已通过；Linux 原生后端未通过。低样本量线级烟雾比较与 100 次 Firefox 黄金门槛相互独立，前者不能将后者标记为完成。
+`nss-real` 只从显式目录加载哈希锁定的 Firefox 运行时。Windows 上两个档案的生命周期、ALPN、证书、deadline、HTTP/HTTPS 1.1 与 Python API 本地 fixture 测试已通过；Linux 只通过 C 编译和 Runtime 加载/版本探测烟雾测试。低样本量线级烟雾比较、平台运行测试与正式 Firefox 黄金门槛相互独立，任何一项都不能替代另一项。

@@ -38,11 +38,9 @@ DEFAULT_RUNTIME_FILES = {
     ),
     "linux-x86_64": (
         "libfreeblpriv3.so",
-        "libmozglue.so",
         "libmozsqlite3.so",
         "libnspr4.so",
         "libnss3.so",
-        "libnssckbi.so",
         "libnssutil3.so",
         "libplc4.so",
         "libplds4.so",

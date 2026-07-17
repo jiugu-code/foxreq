@@ -1,4 +1,5 @@
 #include "foxreq_nss_real_internal.h"
+#include "platform_socket.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -111,7 +112,7 @@ static foxreq_nss_result category_for_error(int32_t code,
 }
 
 static uint64_t deadline_after(uint64_t timeout_millis) {
-  uint64_t now = (uint64_t)GetTickCount64();
+  uint64_t now = foxreq_platform_monotonic_millis();
   if (timeout_millis > UINT64_MAX - now) {
     return UINT64_MAX;
   }
@@ -121,7 +122,7 @@ static uint64_t deadline_after(uint64_t timeout_millis) {
 static int wait_for_io(foxreq_pr_file_desc *fd, int16_t flags,
                        uint64_t deadline, int32_t *out_error) {
   foxreq_pr_poll_desc descriptor;
-  uint64_t now = (uint64_t)GetTickCount64();
+  uint64_t now = foxreq_platform_monotonic_millis();
   uint64_t remaining;
   int32_t result;
   if (now >= deadline) {
@@ -166,80 +167,6 @@ static foxreq_nss_result force_handshake(foxreq_nss_connection *connection,
   }
 }
 
-static int wait_for_connect(SOCKET socket_handle, uint64_t timeout_millis) {
-  fd_set writable;
-  struct timeval timeout;
-  uint64_t seconds = timeout_millis / UINT64_C(1000);
-  uint64_t microseconds = (timeout_millis % UINT64_C(1000)) * UINT64_C(1000);
-  int socket_error = 0;
-  int socket_error_length = (int)sizeof(socket_error);
-  int selected;
-  if (seconds > (uint64_t)LONG_MAX) {
-    seconds = (uint64_t)LONG_MAX;
-    microseconds = UINT64_C(0);
-  }
-  FD_ZERO(&writable);
-  FD_SET(socket_handle, &writable);
-  timeout.tv_sec = (long)seconds;
-  timeout.tv_usec = (long)microseconds;
-  selected = select(0, NULL, &writable, NULL, &timeout);
-  if (selected <= 0 ||
-      getsockopt(socket_handle, SOL_SOCKET, SO_ERROR, (char *)&socket_error,
-                 &socket_error_length) != 0 ||
-      socket_error != 0) {
-    return 0;
-  }
-  return 1;
-}
-
-static SOCKET connect_socket(const char *host, uint16_t port,
-                             uint64_t timeout_millis) {
-  struct addrinfo hints;
-  struct addrinfo *addresses = NULL;
-  struct addrinfo *address;
-  char service[6];
-  SOCKET connected = INVALID_SOCKET;
-  u_long nonblocking = 1UL;
-  if (timeout_millis == UINT64_C(0) ||
-      _snprintf_s(service, sizeof(service), _TRUNCATE, "%u",
-                  (unsigned int)port) < 0) {
-    return INVALID_SOCKET;
-  }
-  memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_protocol = IPPROTO_TCP;
-  if (getaddrinfo(host, service, &hints, &addresses) != 0) {
-    return INVALID_SOCKET;
-  }
-  for (address = addresses; address != NULL; address = address->ai_next) {
-    SOCKET candidate = socket(address->ai_family, address->ai_socktype,
-                              address->ai_protocol);
-    int connect_result;
-    if (candidate == INVALID_SOCKET ||
-        ioctlsocket(candidate, FIONBIO, &nonblocking) != 0) {
-      if (candidate != INVALID_SOCKET) {
-        closesocket(candidate);
-      }
-      continue;
-    }
-    connect_result = connect(candidate, address->ai_addr,
-                             (int)address->ai_addrlen);
-    if (connect_result == 0 ||
-        (WSAGetLastError() == WSAEWOULDBLOCK &&
-         wait_for_connect(candidate, timeout_millis))) {
-      connected = candidate;
-      break;
-    }
-    closesocket(candidate);
-  }
-  freeaddrinfo(addresses);
-  if (connected == INVALID_SOCKET) {
-    return INVALID_SOCKET;
-  }
-  return connected;
-}
-
 static int __cdecl insecure_auth(void *argument, foxreq_pr_file_desc *fd,
                                  int check_signature, int is_server) {
   foxreq_nss_connection *connection = (foxreq_nss_connection *)argument;
@@ -261,7 +188,7 @@ foxreq_nss_connect(foxreq_nss_runtime *runtime,
   foxreq_nss_connection *connection = NULL;
   foxreq_nss_session_cache *cache;
   char *host = NULL;
-  SOCKET socket_handle = INVALID_SOCKET;
+  foxreq_platform_socket socket_handle = FOXREQ_PLATFORM_INVALID_SOCKET;
   foxreq_pr_file_desc *transport = NULL;
   foxreq_pr_socket_option nonblocking;
   foxreq_pr_socket_option nonblocking_probe;
@@ -301,9 +228,10 @@ foxreq_nss_connect(foxreq_nss_runtime *runtime,
   connection->last_category = FOXREQ_NSS_RESULT_OK;
   connection->certificate_category = FOXREQ_NSS_RESULT_OK;
 
-  socket_handle = connect_socket(host, options->port, options->timeout_millis);
-  if (socket_handle == INVALID_SOCKET) {
-    set_error(connection, FOXREQ_NSS_RESULT_IO, (int32_t)WSAGetLastError(),
+  socket_handle = foxreq_platform_socket_connect(
+      host, options->port, options->timeout_millis, &error_code);
+  if (socket_handle == FOXREQ_PLATFORM_INVALID_SOCKET) {
+    set_error(connection, FOXREQ_NSS_RESULT_IO, error_code,
               "TCP connection failed");
     result = FOXREQ_NSS_RESULT_IO;
     goto cleanup;
@@ -311,15 +239,15 @@ foxreq_nss_connect(foxreq_nss_runtime *runtime,
   transport =
       foxreq_real_api.pr_import_tcp_socket((intptr_t)socket_handle);
   if (transport == NULL) {
-    closesocket(socket_handle);
-    socket_handle = INVALID_SOCKET;
+    foxreq_platform_socket_close(socket_handle);
+    socket_handle = FOXREQ_PLATFORM_INVALID_SOCKET;
     error_code = foxreq_real_api.pr_get_error();
     set_error(connection, FOXREQ_NSS_RESULT_IO, error_code,
               "NSPR socket import failed");
     result = FOXREQ_NSS_RESULT_IO;
     goto cleanup;
   }
-  socket_handle = INVALID_SOCKET;
+  socket_handle = FOXREQ_PLATFORM_INVALID_SOCKET;
   nonblocking.option = FOXREQ_PR_SOCKET_NONBLOCKING;
   nonblocking.reserved32 = UINT32_C(0);
   nonblocking.value.non_blocking = 1;
@@ -415,8 +343,8 @@ foxreq_nss_connect(foxreq_nss_runtime *runtime,
   return FOXREQ_NSS_RESULT_OK;
 
 cleanup:
-  if (socket_handle != INVALID_SOCKET) {
-    closesocket(socket_handle);
+  if (socket_handle != FOXREQ_PLATFORM_INVALID_SOCKET) {
+    foxreq_platform_socket_close(socket_handle);
   }
   if (connection != NULL && connection->fd != NULL) {
     (void)foxreq_real_api.pr_close(connection->fd);
